@@ -5,11 +5,15 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Person;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ShortcutInfo;
+import android.content.pm.ShortcutManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.SystemClock;
 import android.util.Base64;
@@ -36,6 +40,7 @@ public class Pusher {
     static final String PREF = "mengxia_push";
     static final String CH_ID = "mengxia_him";
     static final int NOTI_ID = 8801;
+    static final String SHORTCUT_ID = "mengxia_sir";
     static final int ALARM_ID = 8802;
     static final long INTERVAL = 15 * 60 * 1000L;   // 每 15 分钟看一眼
 
@@ -83,12 +88,27 @@ public class Pusher {
     private static Bitmap avatar(Context ctx) {
         try {
             File f = new File(ctx.getFilesDir(), "sir_avatar.png");
-            if (f.exists()) return BitmapFactory.decodeFile(f.getAbsolutePath());
+            if (f.exists()) return square(BitmapFactory.decodeFile(f.getAbsolutePath()));
         } catch (Exception ignored) {}
         try {
-            return BitmapFactory.decodeResource(ctx.getResources(), R.mipmap.ic_launcher);
+            return square(BitmapFactory.decodeResource(ctx.getResources(), R.mipmap.ic_launcher));
         } catch (Exception ignored) {}
         return null;
+    }
+
+    /** 通知里的头像要方的、要小的：先居中裁成正方形，再缩到 256。 */
+    private static Bitmap square(Bitmap src) {
+        if (src == null) return null;
+        try {
+            int w = src.getWidth(), h = src.getHeight();
+            if (w <= 0 || h <= 0) return null;
+            int side = Math.min(w, h);
+            Bitmap cut = Bitmap.createBitmap(src, (w - side) / 2, (h - side) / 2, side, side);
+            if (side <= 256) return cut;
+            return Bitmap.createScaledBitmap(cut, 256, 256, true);
+        } catch (Exception e) {
+            return src;
+        }
     }
 
     // ---------- 待收队列 ----------
@@ -326,12 +346,66 @@ public class Pusher {
             b.setSmallIcon(R.mipmap.ic_launcher)
                     .setContentTitle(title)
                     .setContentText(text)
-                    .setStyle(new Notification.BigTextStyle().bigText(text))
                     .setAutoCancel(true)
                     .setContentIntent(pi);
+
             Bitmap av = avatar(ctx);
-            if (av != null) b.setLargeIcon(av);
+            boolean asChat = false;
+
+            // 安卓 9 以上：走"对话通知"——最前面那一格是他的头像，右边不再挂第二张图。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    Icon face = (av != null) ? Icon.createWithBitmap(av) : null;
+                    Person.Builder pb = new Person.Builder().setKey("sir").setName(title).setImportant(true);
+                    if (face != null) pb.setIcon(face);
+                    Person sir = pb.build();
+                    Person her = new Person.Builder().setKey("me").setName("我").build();
+
+                    Notification.MessagingStyle st = new Notification.MessagingStyle(her);
+                    st.addMessage(new Notification.MessagingStyle.Message(
+                            text, System.currentTimeMillis(), sir));
+                    b.setStyle(st);
+                    b.addPerson(sir);
+                    if (pushConversation(ctx, title, face, sir)) b.setShortcutId(SHORTCUT_ID);
+                    asChat = true;
+                } catch (Exception ignored) {}
+            }
+
+            // 老系统兜底：还是原来那样，头像挂在右边总比没有强。
+            if (!asChat) {
+                b.setStyle(new Notification.BigTextStyle().bigText(text));
+                if (av != null) b.setLargeIcon(av);
+            }
+
             nm.notify(NOTI_ID, b.build());
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * 把"先生"注册成一个长期存在的对话快捷方式。
+     * 系统认出它之后，通知就会按聊天的样子排：头像在最前，内容跟在后面。
+     */
+    private static boolean pushConversation(Context ctx, String name, Icon face, Person sir) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false;
+        try {
+            ShortcutManager sm = ctx.getSystemService(ShortcutManager.class);
+            if (sm == null) return false;
+            Intent open = new Intent(ctx, MainActivity.class);
+            open.setAction(Intent.ACTION_VIEW);
+            open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            ShortcutInfo.Builder sb = new ShortcutInfo.Builder(ctx, SHORTCUT_ID)
+                    .setShortLabel(name)
+                    .setLongLabel(name)
+                    .setLongLived(true)
+                    .setPerson(sir)
+                    .setIntent(open);
+            if (face != null) sb.setIcon(face);
+            ShortcutInfo si = sb.build();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) sm.pushDynamicShortcut(si);
+            else sm.addDynamicShortcuts(java.util.Collections.singletonList(si));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
