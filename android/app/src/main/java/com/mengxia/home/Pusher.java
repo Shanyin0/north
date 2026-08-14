@@ -1,0 +1,337 @@
+package com.mengxia.home;
+
+import android.app.AlarmManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.Build;
+import android.os.SystemClock;
+import android.util.Base64;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Calendar;
+import java.util.Random;
+
+/**
+ * 主动推送：闹钟叫醒 → 决策层 → 影子路由调模型 → 本地通知 + 存进待收队列。
+ * 网页那边下次打开时把队列里的消息接走，放进聊天记录。
+ */
+public class Pusher {
+
+    static final String PREF = "mengxia_push";
+    static final String CH_ID = "mengxia_him";
+    static final int NOTI_ID = 8801;
+    static final int ALARM_ID = 8802;
+    static final long INTERVAL = 15 * 60 * 1000L;   // 每 15 分钟看一眼
+
+    // ---------- 闹钟 ----------
+    public static void schedule(Context ctx) {
+        try {
+            AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
+            Intent i = new Intent(ctx, PushReceiver.class);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent pi = PendingIntent.getBroadcast(ctx, ALARM_ID, i, flags);
+            am.setInexactRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + INTERVAL, INTERVAL, pi);
+        } catch (Exception ignored) {}
+    }
+
+    // ---------- 网页交给壳的东西 ----------
+    public static void sync(Context ctx, String json) {
+        try {
+            JSONObject o = new JSONObject(json);
+            SharedPreferences sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+            SharedPreferences.Editor e = sp.edit();
+            e.putString("cfg", json);
+            e.putLong("lastMsgTs", o.optLong("lastMsgTs", System.currentTimeMillis()));
+            e.putInt("usedToday", o.optInt("usedToday", 0));
+            e.putString("day", o.optString("day", ""));
+            e.apply();
+            String avatar = o.optString("avatar", "");
+            if (avatar.length() > 0 && avatar.startsWith("data:image")) saveAvatar(ctx, avatar);
+        } catch (Exception ignored) {}
+    }
+
+    private static void saveAvatar(Context ctx, String dataUrl) {
+        try {
+            int comma = dataUrl.indexOf(',');
+            if (comma < 0) return;
+            byte[] b = Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT);
+            File f = new File(ctx.getFilesDir(), "sir_avatar.png");
+            FileOutputStream fo = new FileOutputStream(f);
+            fo.write(b);
+            fo.close();
+        } catch (Exception ignored) {}
+    }
+
+    private static Bitmap avatar(Context ctx) {
+        try {
+            File f = new File(ctx.getFilesDir(), "sir_avatar.png");
+            if (f.exists()) return BitmapFactory.decodeFile(f.getAbsolutePath());
+        } catch (Exception ignored) {}
+        try {
+            return BitmapFactory.decodeResource(ctx.getResources(), R.mipmap.ic_launcher);
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    // ---------- 待收队列 ----------
+    public static String takePending(Context ctx) {
+        SharedPreferences sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        String s = sp.getString("pending", "[]");
+        sp.edit().putString("pending", "[]").apply();
+        return s;
+    }
+
+    private static void addPending(Context ctx, String text) {
+        try {
+            SharedPreferences sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+            JSONArray arr = new JSONArray(sp.getString("pending", "[]"));
+            JSONObject o = new JSONObject();
+            o.put("text", text);
+            o.put("ts", System.currentTimeMillis());
+            arr.put(o);
+            sp.edit().putString("pending", arr.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    // ---------- 决策层 ----------
+    private static String blocked(Context ctx, JSONObject cfg) {
+        if (!cfg.optBoolean("pushOn", true)) return "off";
+        Calendar c = Calendar.getInstance();
+        int h = c.get(Calendar.HOUR_OF_DAY);
+        int d = c.get(Calendar.DAY_OF_WEEK);           // 1=周日 7=周六
+        boolean weekend = (d == 1 || d == 7);
+        if (weekend ? (h >= 2 && h < 12) : (h >= 0 && h < 8)) return "sleep";
+
+        SharedPreferences sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+        long last = sp.getLong("lastMsgTs", 0);
+        int cd = sp.getInt("cooldown", 0);
+        if (cd <= 0) { cd = 120 + new Random().nextInt(91); sp.edit().putInt("cooldown", cd).apply(); }
+        if (System.currentTimeMillis() - last < cd * 60000L) return "cooldown";
+
+        String today = today();
+        String day = sp.getString("day", "");
+        int used = day.equals(today) ? sp.getInt("usedToday", 0) : 0;
+        if (used >= cfg.optInt("pushMax", 5)) return "limit";
+        return "";
+    }
+
+    private static String today() {
+        Calendar c = Calendar.getInstance();
+        return c.get(Calendar.YEAR) + "-" + (c.get(Calendar.MONTH) + 1) + "-" + c.get(Calendar.DAY_OF_MONTH);
+    }
+
+    private static String userStatus() {
+        Calendar c = Calendar.getInstance();
+        int h = c.get(Calendar.HOUR_OF_DAY);
+        int d = c.get(Calendar.DAY_OF_WEEK);
+        boolean weekend = (d == 1 || d == 7);
+        if (weekend) {
+            if (h >= 2 && h < 12) return "她在睡觉（周末晚睡晚起）";
+            if (h < 14) return "她可能刚起床";
+            if (h < 18) return "她可能在出门或者窝着休息";
+            return "她在放松，或者在刷手机";
+        }
+        if (h < 8) return "她在睡觉";
+        if (h < 10) return "她可能刚起床，或者在路上";
+        if (h < 12) return "上午，她大概在忙";
+        if (h < 14) return "午间，她可能在吃饭或午休";
+        if (h < 19) return "下午，她大概在忙";
+        if (h < 22) return "她该到家了，在休息";
+        return "她可能准备睡了，或者还在刷手机";
+    }
+
+    // ---------- 主流程 ----------
+    public static void run(Context ctx) {
+        try {
+            SharedPreferences sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+            String cfgStr = sp.getString("cfg", "");
+            if (cfgStr.length() == 0) return;
+            JSONObject cfg = new JSONObject(cfgStr);
+            if (blocked(ctx, cfg).length() > 0) return;
+
+            String reply = callModel(cfg);
+            if (reply == null) return;
+            reply = clean(reply);
+            if (reply.length() == 0) return;
+
+            addPending(ctx, reply);
+            SharedPreferences.Editor e = sp.edit();
+            e.putLong("lastMsgTs", System.currentTimeMillis());
+            e.putInt("cooldown", 120 + new Random().nextInt(91));
+            String today = today();
+            int used = today.equals(sp.getString("day", "")) ? sp.getInt("usedToday", 0) : 0;
+            e.putString("day", today);
+            e.putInt("usedToday", used + 1);
+            e.apply();
+
+            notify(ctx, cfg.optString("sirName", "先生"), reply);
+        } catch (Exception ignored) {}
+    }
+
+    private static String clean(String t) {
+        if (t == null) return "";
+        String s = t.replaceAll("(?s)<think>.*?</think>", "")
+                .replaceAll("(?s)<thinking>.*?</thinking>", "")
+                .replaceAll("(?s)<status>.*?</status>", "")
+                .replaceAll("(?s)<photo>.*?</photo>", "")
+                .replaceAll("(?s)```.*?```", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (s.length() > 60) s = s.substring(0, 60);
+        return s;
+    }
+
+    // ---------- 调模型（影子路由） ----------
+    private static String callModel(JSONObject cfg) {
+        try {
+            String mode = cfg.optString("apiMode", "");
+            String key = cfg.optString("apiKey", "");
+            if (key.length() == 0) return null;
+
+            String shadow = "<system_trigger>\n现在是 " + timeStr() + "。\n她此刻大概："
+                    + userStatus() + "。\n\n" + cfg.optString("shadowBody", "") + "\n</system_trigger>";
+
+            JSONArray recent = cfg.optJSONArray("messages");
+            if (recent == null) recent = new JSONArray();
+
+            if ("anthropic".equals(mode)) {
+                JSONArray msgs = new JSONArray();
+                for (int i = 0; i < recent.length(); i++) msgs.put(recent.getJSONObject(i));
+                JSONObject sh = new JSONObject();
+                sh.put("role", "user");
+                sh.put("content", shadow);
+                msgs.put(sh);
+                JSONObject body = new JSONObject();
+                body.put("model", cfg.optString("apiModel", "claude-3-5-haiku-latest"));
+                body.put("max_tokens", 400);
+                body.put("system", cfg.optString("sysPrompt", ""));
+                body.put("messages", msgs);
+                String out = post("https://api.anthropic.com/v1/messages", body.toString(), new String[][]{
+                        {"Content-Type", "application/json"},
+                        {"x-api-key", key},
+                        {"anthropic-version", "2023-06-01"}
+                });
+                if (out == null) return null;
+                JSONObject j = new JSONObject(out);
+                JSONArray content = j.optJSONArray("content");
+                if (content == null || content.length() == 0) return null;
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < content.length(); i++) sb.append(content.getJSONObject(i).optString("text", ""));
+                return sb.toString();
+            }
+
+            String base = cfg.optString("apiBase", "");
+            if (base.length() == 0) return null;
+            while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+            JSONArray msgs = new JSONArray();
+            JSONObject sys = new JSONObject();
+            sys.put("role", "system");
+            sys.put("content", cfg.optString("sysPrompt", ""));
+            msgs.put(sys);
+            for (int i = 0; i < recent.length(); i++) msgs.put(recent.getJSONObject(i));
+            JSONObject sh = new JSONObject();
+            sh.put("role", "user");
+            sh.put("content", shadow);
+            msgs.put(sh);
+            JSONObject body = new JSONObject();
+            body.put("model", cfg.optString("apiModel", "gpt-4o-mini"));
+            body.put("max_tokens", 400);
+            body.put("messages", msgs);
+            String out = post(base + "/v1/chat/completions", body.toString(), new String[][]{
+                    {"Content-Type", "application/json"},
+                    {"Authorization", "Bearer " + key}
+            });
+            if (out == null) return null;
+            JSONObject j = new JSONObject(out);
+            JSONArray choices = j.optJSONArray("choices");
+            if (choices == null || choices.length() == 0) return null;
+            return choices.getJSONObject(0).getJSONObject("message").optString("content", "");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String timeStr() {
+        Calendar c = Calendar.getInstance();
+        String[] wd = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+        return (c.get(Calendar.MONTH) + 1) + "月" + c.get(Calendar.DAY_OF_MONTH) + "日 "
+                + String.format("%02d:%02d", c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE))
+                + "（" + wd[c.get(Calendar.DAY_OF_WEEK) - 1] + "）";
+    }
+
+    private static String post(String url, String body, String[][] headers) {
+        HttpURLConnection con = null;
+        try {
+            con = (HttpURLConnection) new URL(url).openConnection();
+            con.setRequestMethod("POST");
+            con.setConnectTimeout(20000);
+            con.setReadTimeout(60000);
+            con.setDoOutput(true);
+            for (String[] h : headers) con.setRequestProperty(h[0], h[1]);
+            OutputStream os = con.getOutputStream();
+            os.write(body.getBytes("UTF-8"));
+            os.close();
+            int code = con.getResponseCode();
+            BufferedReader r = new BufferedReader(new InputStreamReader(
+                    code >= 400 ? con.getErrorStream() : con.getInputStream(), "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line);
+            r.close();
+            if (code >= 400) return null;
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        } finally {
+            if (con != null) con.disconnect();
+        }
+    }
+
+    // ---------- 通知 ----------
+    public static void notify(Context ctx, String title, String text) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel ch = new NotificationChannel(CH_ID, "他来找你", NotificationManager.IMPORTANCE_HIGH);
+                ch.setDescription("他自己浮上来说话的时候");
+                nm.createNotificationChannel(ch);
+            }
+            Intent open = new Intent(ctx, MainActivity.class);
+            open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+            PendingIntent pi = PendingIntent.getActivity(ctx, 0, open, flags);
+
+            Notification.Builder b;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b = new Notification.Builder(ctx, CH_ID);
+            else b = new Notification.Builder(ctx);
+            b.setSmallIcon(R.mipmap.ic_launcher)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setStyle(new Notification.BigTextStyle().bigText(text))
+                    .setAutoCancel(true)
+                    .setContentIntent(pi);
+            Bitmap av = avatar(ctx);
+            if (av != null) b.setLargeIcon(av);
+            nm.notify(NOTI_ID, b.build());
+        } catch (Exception ignored) {}
+    }
+}

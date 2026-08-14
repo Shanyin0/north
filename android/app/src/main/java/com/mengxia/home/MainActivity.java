@@ -139,6 +139,17 @@ public class MainActivity extends Activity {
 
         web.addJavascriptInterface(new SaveBridge(this), "MengxiaNative");
 
+        // 主动推送：挂上定时闹钟，并要一次通知权限
+        Pusher.schedule(getApplicationContext());
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 9001);
+                }
+            } catch (Exception ignored) {}
+        }
+
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(siteUrl());
     }

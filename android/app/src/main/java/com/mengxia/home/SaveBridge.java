@@ -93,6 +93,22 @@ public class SaveBridge {
         }
     }
 
+    // ---------- 主动推送 ----------
+    @JavascriptInterface
+    public void syncPush(String json) {
+        try { Pusher.sync(act.getApplicationContext(), json); } catch (Exception ignored) {}
+    }
+
+    @JavascriptInterface
+    public String takePending() {
+        try { return Pusher.takePending(act.getApplicationContext()); } catch (Exception e) { return "[]"; }
+    }
+
+    @JavascriptInterface
+    public void notify(String title, String text) {
+        try { Pusher.notify(act.getApplicationContext(), title, text); } catch (Exception ignored) {}
+    }
+
     private void toast(final String msg) {
         act.runOnUiThread(new Runnable() {
             public void run() { Toast.makeText(act, msg, Toast.LENGTH_LONG).show(); }
