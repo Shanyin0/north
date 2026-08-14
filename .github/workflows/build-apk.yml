@@ -1,0 +1,59 @@
+name: 打包梦匣 APK
+
+on:
+  workflow_dispatch:        # 手动点按钮就能打包
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取代码
+        uses: actions/checkout@v4
+
+      - name: 装 Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 装 Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: 打包
+        working-directory: android
+        run: |
+          gradle --no-daemon assembleRelease \
+            -PappVersionCode=${{ github.run_number }} \
+            -PappVersionName=1.0.${{ github.run_number }}
+
+      - name: 改个名字
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             "out/mengxia-1.0.${{ github.run_number }}.apk"
+          ls -la out
+
+      - name: 存一份（Actions 里可下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: mengxia-apk
+          path: out/*.apk
+
+      - name: 发布到 Releases（手机上直接下）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk --yes --cleanup-tag || true
+          gh release create apk out/*.apk \
+            --title "梦匣 App · 1.0.${{ github.run_number }}" \
+            --notes "手机上点下面的 .apk 就能装。装过一次之后，以后更新前端不用重装，重开 App 就是新的。"

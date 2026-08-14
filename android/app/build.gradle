@@ -1,0 +1,40 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.mengxia.home'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.mengxia.home"
+        minSdk 24
+        targetSdk 34
+        versionCode (project.hasProperty('appVersionCode') ? appVersionCode.toInteger() : 1)
+        versionName (project.hasProperty('appVersionName') ? appVersionName : "1.0")
+        // 前端地址：改这一行就能换成别的网址
+        buildConfigField "String", "SITE_URL", "\"https://shanyin0.github.io/north/\""
+    }
+
+    signingConfigs {
+        mengxia {
+            storeFile file("mengxia.keystore")
+            storePassword "mengxia2026"
+            keyAlias "mengxia"
+            keyPassword "mengxia2026"
+        }
+    }
+
+    buildTypes {
+        debug   { signingConfig signingConfigs.mengxia }
+        release {
+            signingConfig signingConfigs.mengxia
+            minifyEnabled false
+        }
+    }
+
+    buildFeatures { buildConfig true }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
