@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "north",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-01",
+  "observability": { "enabled": true },
+
+  // 备份存这儿。id 要换成你自己那个 KV 的 ID：
+  // Cloudflare → Storage & Databases → KV → 点进你建的那个 → 上面那串就是
+  "kv_namespaces": [
+    { "binding": "BK", "id": "把这里换成你的KV的ID" }
+  ]
+
+  // PASS / UPSTREAM / UPSTREAM_KEY 这三个不写在这儿。
+  // 它们是机密，在网页上加：Worker → Settings → Variables and Secrets → Secret
+}

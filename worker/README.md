@@ -8,11 +8,19 @@ Cloudflare 左边菜单 → **Storage & Databases** → **KV** → **Create**
 
 名字随便，写 `mengxia` 就行。建完不用管。
 
-## 二、把代码贴进 Worker
+## 二、让 Worker 自己去仓库拿代码（不用手机复制粘贴）
 
-左边 → **Compute (Workers)** → 点你那个 `north` → **Edit code**
+手机上复制一百多行代码基本粘不干净，别折腾了。让 Cloudflare 自己去 GitHub 拿。
 
-把 `worker.js` 整个内容贴进去，覆盖原来的，点 **Deploy**。
+1. Cloudflare → **Compute (Workers)** → 点 `north` → **Settings** → **Build**
+2. **Connect to Git** → 授权 GitHub → 选 `Shanyin0/north`
+3. 两个格子这样填：
+   - **Root directory**：`worker`
+   - **Deploy command**：`npx wrangler deploy`
+4. 保存。以后每次仓库一更新，它自己重新部署。
+
+在这之前先把 `worker/wrangler.jsonc` 里那句 `把这里换成你的KV的ID` 换成真的 ID
+（在 GitHub 网页上点铅笔改就行，手机也能改）。ID 在第一步那个 KV 的详情页上。
 
 ## 三、绑 KV
 
