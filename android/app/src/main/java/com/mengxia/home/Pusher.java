@@ -40,6 +40,7 @@ public class Pusher {
     static final String PREF = "mengxia_push";
     static final String CH_ID = "mengxia_him";
     static final int NOTI_ID = 8801;
+    private static int notiSeq = 0;
     static final String SHORTCUT_ID = "mengxia_sir";
     static final int ALARM_ID = 8802;
     static final long INTERVAL = 15 * 60 * 1000L;   // 每 15 分钟看一眼
@@ -366,18 +367,22 @@ public class Pusher {
                             text, System.currentTimeMillis(), sir));
                     b.setStyle(st);
                     b.addPerson(sir);
-                    if (pushConversation(ctx, title, face, sir)) b.setShortcutId(SHORTCUT_ID);
-                    asChat = true;
+                    // 只有快捷方式登记成功，系统才会按对话通知排版（头像在最前）
+                    if (pushConversation(ctx, title, face, sir)) {
+                        b.setShortcutId(SHORTCUT_ID);
+                        asChat = true;
+                    }
                 } catch (Exception ignored) {}
             }
 
-            // 老系统兜底：还是原来那样，头像挂在右边总比没有强。
+            // 排不上对话样式就退回去：至少把头像挂上，别只剩一个软件图标。
             if (!asChat) {
                 b.setStyle(new Notification.BigTextStyle().bigText(text));
                 if (av != null) b.setLargeIcon(av);
             }
 
-            nm.notify(NOTI_ID, b.build());
+            notiSeq = (notiSeq + 1) % 20;
+            nm.notify(NOTI_ID + notiSeq, b.build());
         } catch (Exception ignored) {}
     }
 
