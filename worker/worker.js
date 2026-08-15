@@ -33,16 +33,32 @@ const text = (s, status) => new Response(s, {
   headers: Object.assign({ 'Content-Type': 'text/plain; charset=utf-8' }, CORS)
 });
 
+/** 从请求里取口令。前后空格一律不算 */
+function gotPass(req) {
+  return String(req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+}
+
 /** 口令对不对。手机那边是 Authorization: Bearer <口令> */
 function pass(req, env) {
-  const want = String(env.PASS || '');
+  // PASS 也 trim 一下 —— 在网页上填的时候很容易末尾多带一个空格或者换行
+  const want = String(env.PASS || '').trim();
   if (!want) return false;
-  const got = String(req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  const got = gotPass(req);
   if (got.length !== want.length) return false;
   // 逐位比，别让人靠计时猜出来
   let diff = 0;
   for (let i = 0; i < want.length; i++) diff |= got.charCodeAt(i) ^ want.charCodeAt(i);
   return diff === 0;
+}
+
+/** 口令不对的时候，尽量说清是哪种不对，但不能透露正确的口令长什么样 */
+function whyNo(req, env) {
+  const got = gotPass(req);
+  if (!String(env.PASS || '').trim()) return '这个后台还没设口令（Cloudflare 里加一个叫 PASS 的 Secret）';
+  if (!got) return '没带口令';
+  if (/^sk-/i.test(got)) return '你填的是模型站的 key（sk- 开头那个），这里要填的是 PASS 那句口令';
+  if (/\s/.test(String(req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''))) return '口令里夹着空格';
+  return '口令对不上。手机上填的要跟 Cloudflare 里 PASS 那个 Secret 一模一样';
 }
 
 /** 密码学随机的 0..n-1，不用 Math.random */
@@ -76,7 +92,7 @@ export default {
 
     // ---------- 1. 中转 ----------
     if (path === '/v1/chat/completions' || path === '/v1/messages') {
-      if (!pass(req, env)) return json({ error: { message: '口令不对' } }, 401);
+      if (!pass(req, env)) return json({ error: { message: whyNo(req, env) } }, 401);
       const up = String(env.UPSTREAM || '').replace(/\/+$/, '');
       const upKey = String(env.UPSTREAM_KEY || '');
       if (!up || !upKey) return json({ error: { message: 'Worker 里还没填 UPSTREAM / UPSTREAM_KEY' } }, 500);
@@ -105,7 +121,7 @@ export default {
 
     // ---------- 2. 备份 ----------
     if (path === '/backup') {
-      if (!pass(req, env)) return text('口令不对', 401);
+      if (!pass(req, env)) return text(whyNo(req, env), 401);
       if (!env.BK) return text('Worker 还没绑 KV（变量名要写 BK）', 500);
 
       if (req.method === 'PUT' || req.method === 'POST') {
@@ -131,7 +147,7 @@ export default {
 
     // ---------- 3. 小工具 ----------
     if (path.startsWith('/tool/')) {
-      if (!pass(req, env)) return json({ error: '口令不对' }, 401);
+      if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
       const name = path.slice('/tool/'.length);
       const num = (k, dft, max) => {
         const v = parseInt(url.searchParams.get(k) || '', 10);
