@@ -1,5 +1,5 @@
 /**
- * 梦匣的后台 · Cloudflare Worker
+ * 后台 · Cloudflare Worker
  *
  * 它干三件事：
  *   1. /v1/chat/completions —— 中转。手机把话发到这儿，这儿再拿真 key 去找模型。
@@ -61,14 +61,8 @@ export default {
 
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
-    if (path === '/') {
-      return text('梦匣的后台在这儿。\n\n' +
-        '/v1/chat/completions  中转\n' +
-        '/backup               备份（PUT 存 / GET 取）\n' +
-        '/tool/dice?n=6&k=1    掷骰子\n' +
-        '/tool/pick?n=78       抽一张\n' +
-        '/tool/coin            抛硬币\n');
-    }
+    // 门口什么都不说。谁路过都只看见 ok，看不出这后面是什么
+    if (path === '/') return text('ok');
 
     // ---------- 1. 中转 ----------
     if (path === '/v1/chat/completions' || path === '/v1/messages') {
