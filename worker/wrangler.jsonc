@@ -8,7 +8,7 @@
   // 备份存这儿。id 要换成你自己那个 KV 的 ID：
   // Cloudflare → Storage & Databases → KV → 点进你建的那个 → 上面那串就是
   "kv_namespaces": [
-    { "binding": "BK", "id": "把这里换成你的KV的ID" }
+    { "binding": "BK", "id": "e01a4fe9c1e8449dbf3733e3960f290c" }
   ]
 
   // PASS / UPSTREAM / UPSTREAM_KEY 这三个不写在这儿。
