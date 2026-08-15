@@ -34,6 +34,7 @@ public class MainActivity extends Activity {
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
     private boolean loadFailed = false;
+    private PermissionRequest pendingMic;
 
     private String siteUrl() {
         SharedPreferences sp = getSharedPreferences(PREF, Context.MODE_PRIVATE);
@@ -125,7 +126,19 @@ public class MainActivity extends Activity {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 runOnUiThread(new Runnable() {
-                    public void run() { request.grant(request.getResources()); }
+                    public void run() {
+                        boolean wantMic = false;
+                        String[] want = request.getResources();
+                        for (String r : want) {
+                            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) wantMic = true;
+                        }
+                        if (wantMic && !hasMic()) {
+                            pendingMic = request;
+                            askMic();
+                            return;   // 等系统那关过了再放行
+                        }
+                        request.grant(want);
+                    }
                 });
             }
         });
@@ -152,6 +165,35 @@ public class MainActivity extends Activity {
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(siteUrl());
+    }
+
+    private boolean hasMic() {
+        if (Build.VERSION.SDK_INT < 23) return true;
+        try {
+            return checkSelfPermission("android.permission.RECORD_AUDIO")
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Exception e) { return false; }
+    }
+
+    private void askMic() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        try { requestPermissions(new String[]{"android.permission.RECORD_AUDIO"}, 9002); } catch (Exception ignored) {}
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code != 9002) return;
+        boolean ok = results != null && results.length > 0
+                && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        final PermissionRequest req = pendingMic;
+        pendingMic = null;
+        if (req == null) return;
+        if (ok) req.grant(req.getResources());
+        else {
+            req.deny();
+            android.widget.Toast.makeText(this, "没有麦克风权限，录不了音", android.widget.Toast.LENGTH_SHORT).show();
+        }
     }
 
     /** 网址打不开时，让她自己改一个 */
