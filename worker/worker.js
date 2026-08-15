@@ -64,6 +64,16 @@ export default {
     // 门口什么都不说。谁路过都只看见 ok，看不出这后面是什么
     if (path === '/') return text('ok');
 
+    // 自检：只说"填没填"，不说填的是什么。她忘了哪个没配好的时候看这个
+    if (path === '/ping') {
+      return json({
+        PASS: !!env.PASS,
+        UPSTREAM: !!env.UPSTREAM,
+        UPSTREAM_KEY: !!env.UPSTREAM_KEY,
+        KV: !!env.BK
+      });
+    }
+
     // ---------- 1. 中转 ----------
     if (path === '/v1/chat/completions' || path === '/v1/messages') {
       if (!pass(req, env)) return json({ error: { message: '口令不对' } }, 401);
