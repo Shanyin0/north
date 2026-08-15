@@ -28,8 +28,8 @@ import android.widget.FrameLayout;
 public class MainActivity extends Activity {
 
     private static final int FILE_PICK = 4001;
-    private static final String PREF = "mengxia";
-    private static final String KEY_URL = "site_url";
+    static final String PREF = "mengxia";
+    static final String KEY_URL = "site_url";
 
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
@@ -39,6 +39,35 @@ public class MainActivity extends Activity {
     private String siteUrl() {
         SharedPreferences sp = getSharedPreferences(PREF, Context.MODE_PRIVATE);
         return sp.getString(KEY_URL, BuildConfig.SITE_URL);
+    }
+
+    /** 网页那边（序章里那一格）要读的当前地址 */
+    static String siteUrlOf(Context c) {
+        return c.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .getString(KEY_URL, BuildConfig.SITE_URL);
+    }
+
+    static String defaultSite() { return BuildConfig.SITE_URL; }
+
+    /** 没写 http/https 的时候补一个：像 IP 的补 http，像域名的补 https */
+    static String fixScheme(String u) {
+        String x = u == null ? "" : u.trim();
+        if (x.length() == 0) return BuildConfig.SITE_URL;
+        if (x.startsWith("http://") || x.startsWith("https://")) return x;
+        return (x.charAt(0) >= '0' && x.charAt(0) <= '9') ? ("http://" + x) : ("https://" + x);
+    }
+
+    /** 序章里点「换过去」走这儿 */
+    void switchSite(final String u) {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                String x = fixScheme(u);
+                saveSiteUrl(x);
+                loadFailed = false;
+                try { web.clearCache(true); } catch (Exception ignored) {}
+                web.loadUrl(x);
+            }
+        });
     }
 
     private void saveSiteUrl(String u) {
@@ -208,7 +237,7 @@ public class MainActivity extends Activity {
                 .setPositiveButton("保存并打开", (d, w) -> {
                     String u = input.getText().toString().trim();
                     if (u.length() > 0) {
-                        if (!u.startsWith("http")) u = "https://" + u;
+                        u = fixScheme(u);
                         saveSiteUrl(u);
                         loadFailed = false;
                         web.loadUrl(u);

@@ -109,6 +109,24 @@ public class SaveBridge {
         try { Pusher.notify(act.getApplicationContext(), title, text); } catch (Exception ignored) {}
     }
 
+    // ---------- 梦匣从哪里打开 ----------
+    @JavascriptInterface
+    public String site() {
+        try { return MainActivity.siteUrlOf(act); } catch (Exception e) { return ""; }
+    }
+
+    @JavascriptInterface
+    public String siteDefault() {
+        try { return MainActivity.defaultSite(); } catch (Exception e) { return ""; }
+    }
+
+    @JavascriptInterface
+    public void setSite(String u) {
+        try {
+            if (act instanceof MainActivity) ((MainActivity) act).switchSite(u);
+        } catch (Exception e) { toast("换不过去：" + e.getMessage()); }
+    }
+
     private void toast(final String msg) {
         act.runOnUiThread(new Runnable() {
             public void run() { Toast.makeText(act, msg, Toast.LENGTH_LONG).show(); }
