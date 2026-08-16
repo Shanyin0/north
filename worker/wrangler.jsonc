@@ -14,7 +14,7 @@
   // 模型站的地址。这个不是秘密，写在这儿就行，省得再去网页上填一个。
   // 换成你「聊天通道」里原来填的那个地址（在 GitHub 上点铅笔改这一行）
   "vars": {
-    "UPSTREAM": "https://api.groq.com/openai"
+    "UPSTREAM": "https://api.gemai.cc"
   }
 
   // 剩下两个是真秘密，不写在仓库里。
