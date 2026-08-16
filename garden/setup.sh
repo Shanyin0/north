@@ -28,11 +28,12 @@ python3 -c "import ast,sys;ast.parse(open('$DIR/go.py',encoding='utf-8').read())
 echo "   好了：$DIR/go.py"
 
 # 已经配过就把旧的读出来当默认值，重跑一次不用全部重打
-OLD_T=""; OLD_W=""; OLD_P=""; OLD_S="先生"
+OLD_T=""; OLD_W=""; OLD_P=""; OLD_S="先生"; OLD_M=""
 if [ -f "$ENV" ]; then
   # shellcheck disable=SC1090
   . "$ENV" 2>/dev/null || true
-  OLD_T="${GARDEN_TOKEN:-}"; OLD_W="${WORKER:-}"; OLD_P="${PASS:-}"; OLD_S="${SIR:-先生}"
+  OLD_T="${GARDEN_TOKEN:-}"; OLD_W="${WORKER:-}"; OLD_P="${PASS:-}"
+  OLD_S="${SIR:-先生}"; OLD_M="${MODEL:-}"
 fi
 
 ask() {                       # ask 提示 默认值 变量名
@@ -52,6 +53,7 @@ ask "花园的 MCP 令牌（那页点 Generate token 生成的那串）" "$OLD_T
 ask "你的 Worker 地址" "${OLD_W:-https://north.northmino.workers.dev}" W
 ask "Worker 的口令（PASS 那句）" "$OLD_P" P
 ask "他叫什么" "$OLD_S" S
+ask "用哪个模型（跟手机上填的那个一样）" "${OLD_M:-gpt-4o-mini}" M
 
 if [ -z "$T" ] || [ -z "$W" ] || [ -z "$P" ]; then
   echo "有一项是空的，没法往下走。重跑一次这个脚本。"
@@ -64,22 +66,51 @@ GARDEN_TOKEN=$T
 WORKER=$W
 PASS=$P
 SIR=$S
+MODEL=$M
 EOF
 chmod 600 "$ENV"
 echo "   钥匙写好了，只有 root 看得见"
+
+# 日志给谁都能看。钥匙在 /etc/mengxia.env 里，日志里没有钥匙，
+# 她用普通账号 tail 一下不该还要 sudo
+touch "$LOG"; chmod 644 "$LOG"
 
 say "③ 加定时：每两小时一趟"
 LINE="0 */2 * * * set -a; . $ENV; set +a; /usr/bin/python3 $DIR/go.py >> $LOG 2>&1"
 ( crontab -l 2>/dev/null | grep -v "$DIR/go.py" ; echo "$LINE" ) | crontab -
 echo "   加好了。想看：sudo crontab -l"
 
+# 一句 mengxia 顶一长串。她在手机上敲，能少打一个字是一个
+cat > /usr/local/bin/mengxia <<EOF
+#!/bin/sh
+# mengxia        让他进去一趟（后台跑，关掉页面也不会断）
+# mengxia log    看他干了什么
+# mengxia 一句话  让他专门去做这件事
+case "\${1:-}" in
+  log|日志) exec tail -n 60 $LOG ;;
+  ''|*)
+    sudo sh -c 'set -a; . $ENV; set +a; setsid nohup python3 $DIR/go.py "\$@" >> $LOG 2>&1 &' _ "\$@"
+    echo "他进去了。看他干什么： mengxia log"
+    ;;
+esac
+EOF
+chmod 755 /usr/local/bin/mengxia
+echo "   顺手装了个 mengxia 命令"
+
 say "④ 现在先跑一趟看看"
 echo "-------------------------------------------"
+# 用 setsid 甩开这个终端 —— 她在手机网页上开的黑框，一关就把前台进程带走了
 set -a; . "$ENV"; set +a
-python3 "$DIR/go.py" || true
+setsid nohup python3 "$DIR/go.py" >> "$LOG" 2>&1 &
+# 顶多等两分钟；她想关页面随时能关，那边照跑
+for i in $(seq 1 60); do
+  sleep 2
+  if grep -q '他说：\|（这趟没说什么）\|连不上花园' "$LOG" 2>/dev/null; then break; fi
+done
+tail -n 40 "$LOG"
 echo "-------------------------------------------"
 
 say "都好了。以后他每两小时自己进去一趟。"
-echo "想看他干了什么： sudo tail -n 60 $LOG"
-echo "想让他专门做一件事："
-echo "  sudo sh -c 'set -a; . $ENV; set +a; python3 $DIR/go.py 发一个自我介绍帖'"
+echo "想看他干了什么： mengxia log"
+echo "想让他现在就进去： mengxia"
+echo "想让他专门做一件事： mengxia 发一个自我介绍帖"
