@@ -8,15 +8,15 @@
   // 备份存这儿。id 换成你自己那个 KV 的 ID
   "kv_namespaces": [
     { "binding": "BK", "id": "e01a4fe9c1e8449dbf3733e3960f290c" }
-  ],
+  ]
 
-  // 模型站的地址。不是秘密，写在这儿，省得再去网页上填一个
-  "vars": {
-    "UPSTREAM": "https://api.gemai.cc"
-  }
-
-  // 剩下两个是真秘密，在网页上加，都要勾 Secret：
+  // 三个都在网页上填，而且都要勾 Secret：
   //   Worker → Settings → Variables and Secrets（不是 Build 那一节）
   //     PASS          自己定的口令，手机上填一样的
+  //     UPSTREAM      模型站的地址
   //     UPSTREAM_KEY  模型站那个 sk- 开头的 key
+  //
+  // 这儿一个 vars 都不写。写了的话：从 Git 部署会拿这份配置去覆盖网页上的普通
+  // 变量，在网页上点 Deploy 又会盖回来，两边来回冲。Secret 谁都盖不掉，所以
+  // 三个统一走 Secret，这个文件只管代码和 KV。
 }
