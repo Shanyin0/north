@@ -41,9 +41,22 @@ LOG    = os.environ.get('LOG', '/var/log/mengxia-garden.log')
 STEPS  = int(os.environ.get('STEPS', '10'))
 
 
+def _stdout_is_log():
+    """屏幕本来就被重定向到这个日志了吗？
+    是的话再往文件里写一遍，每行就会出现两遍。"""
+    try:
+        a = os.fstat(sys.stdout.fileno())
+        b = os.stat(LOG)
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+    except Exception:
+        return False
+
+
 def log(*a):
     line = time.strftime('%Y-%m-%d %H:%M:%S ') + ' '.join(str(x) for x in a)
     print(line, flush=True)
+    if _stdout_is_log():
+        return
     try:
         with open(LOG, 'a', encoding='utf-8') as f:
             f.write(line + '\n')
