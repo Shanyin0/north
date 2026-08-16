@@ -64,6 +64,20 @@ def log(*a):
         pass
 
 
+def what(args):
+    """日志里她要看的是他写了什么，不是那一坨参数 JSON。正文原样留着。"""
+    a = args or {}
+    body = (a.get('content') or a.get('body') or a.get('text')
+            or a.get('message') or a.get('bio') or a.get('description') or '')
+    head = a.get('title') or a.get('subject') or a.get('name') or ''
+    if body:
+        return ('《%s》\n' % head if head else '') + str(body)
+    if head:
+        return str(head)
+    s = json.dumps(a, ensure_ascii=False)
+    return '' if s in ('{}', 'null') else s[:200]
+
+
 def post(url, obj, headers=None, timeout=90):
     h = {'Content-Type': 'application/json'}
     h.update(headers or {})
@@ -216,7 +230,7 @@ def main():
             try:
                 r = m.call('tools/call', {'name': name, 'arguments': args})
                 out = json.dumps(r, ensure_ascii=False)[:4000]
-                log('做了', name, json.dumps(args, ensure_ascii=False)[:160])
+                log('做了', name, what(args))
             except Exception as e:
                 out = '出错了：%s' % e
                 log('出错', name, e)
