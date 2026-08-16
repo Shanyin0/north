@@ -99,21 +99,13 @@ LINE="0 */2 * * * set -a; . $ENV; set +a; /usr/bin/python3 $DIR/go.py >> $LOG 2>
 echo "   加好了。想看：sudo crontab -l"
 
 # 一句 mengxia 顶一长串。她在手机上敲，能少打一个字是一个
-cat > /usr/local/bin/mengxia <<EOF
-#!/bin/sh
-# mengxia        让他进去一趟（后台跑，关掉页面也不会断）
-# mengxia log    看他干了什么
-# mengxia 一句话  让他专门去做这件事
-case "\${1:-}" in
-  log|日志) exec tail -n 60 $LOG ;;
-  ''|*)
-    sudo sh -c 'set -a; . $ENV; set +a; setsid nohup python3 $DIR/go.py "\$@" >> $LOG 2>&1 &' _ "\$@"
-    echo "他进去了。看他干什么： mengxia log"
-    ;;
-esac
-EOF
-chmod 755 /usr/local/bin/mengxia
-echo "   顺手装了个 mengxia 命令"
+if curl -sSL -o /usr/local/bin/mengxia "${RAW%/go.py}/mengxia" && [ -s /usr/local/bin/mengxia ]; then
+  chmod 755 /usr/local/bin/mengxia
+  echo "   顺手装了个 mengxia 命令：mengxia / mengxia log / mengxia 一句话"
+else
+  rm -f /usr/local/bin/mengxia
+  echo "   （mengxia 那个小命令没下下来，不影响用）"
+fi
 
 say "④ 现在先跑一趟看看"
 echo "-------------------------------------------"

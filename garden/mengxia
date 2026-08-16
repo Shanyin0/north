@@ -1,0 +1,20 @@
+#!/bin/sh
+# 三个字顶一长串。她在手机上敲，能少打一个字是一个。
+#
+#   mengxia          让他现在进去一趟（甩到后台，关掉网页也不会断）
+#   mengxia log      看他干了什么
+#   mengxia 一句话    让他专门去做这件事
+ENV=/etc/mengxia.env
+DIR=/opt/mengxia
+LOG=/var/log/mengxia-garden.log
+
+case "${1:-}" in
+  log|日志)
+    exec tail -n 40 "$LOG"
+    ;;
+  ''|*)
+    # setsid nohup 是关键 —— 不加的话网页那个黑框一关就把他掐断了
+    sudo sh -c 'set -a; . '"$ENV"'; set +a; setsid nohup python3 '"$DIR"'/go.py "$@" >> '"$LOG"' 2>&1 &' _ "$@"
+    echo "他进去了。等一分钟看他干什么： mengxia log"
+    ;;
+esac
