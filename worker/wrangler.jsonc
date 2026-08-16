@@ -9,8 +9,16 @@
   // Cloudflare → Storage & Databases → KV → 点进你建的那个 → 上面那串就是
   "kv_namespaces": [
     { "binding": "BK", "id": "e01a4fe9c1e8449dbf3733e3960f290c" }
-  ]
+  ],
 
-  // PASS / UPSTREAM / UPSTREAM_KEY 这三个不写在这儿。
-  // 它们是机密，在网页上加：Worker → Settings → Variables and Secrets → Secret
+  // 模型站的地址。这个不是秘密，写在这儿就行，省得再去网页上填一个。
+  // 换成你「聊天通道」里原来填的那个地址（在 GitHub 上点铅笔改这一行）
+  "vars": {
+    "UPSTREAM": "https://api.groq.com/openai"
+  }
+
+  // 剩下两个是真秘密，不写在仓库里。
+  // 在网页上加：Worker → Settings →（不要在 Build 那一节！）Variables and Secrets
+  //   PASS          你自己定的口令，手机上填一样的
+  //   UPSTREAM_KEY  模型站的 key
 }
