@@ -113,6 +113,24 @@ bb 和先生的小家。单文件网页 + 安卓壳，所有数据只存在她�
 - **我跟 bb 说话**：不要文艺、不要堆词、不要每次都总结收尾。有情绪就直接说，别修饰。
 - **App 里先生跟她说话**：同一套规则已经写进系统提示词里（`buildSysPrompt()` 的【怎么说话】那一段）。改动人设相关的东西时不要把它删掉。
 
+## 推到哪个仓库（这条最重要，错过一次了）
+
+App 里写死的地址是 `https://shanyin0.github.io/north/` —— **她手机上打开的是
+`Shanyin0/north` 那个仓库的 Pages，不是 `Shanyin0/ai.`**。
+
+所以：
+
+- `index.html` 改完，**必须同时推到 `north` 的 `main`**，不然她重下一百次都是旧的。
+- APK 也是从 `north` 打的（`android/**` 一变就自动重打，发到 Releases）。
+- `ai.` 那个分支只是干活的地方，推了她看不见。
+
+改完前端的收尾动作固定是这两句：
+
+```
+cp <构建出来的 index.html> /workspace/north/index.html
+cd /workspace/north && git add -A && git commit -m "…" && git push origin main
+```
+
 ## 技术上要记住的
 
 - `index.html` 是唯一的产物，由 scratchpad 里的 `page.html` + `build.py` 打包出来的。**不要直接手改 index.html。**
