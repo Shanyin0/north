@@ -3,18 +3,39 @@
 """先生自己进花园。
 放在她那台服务器上，定时跑。不用她按，也不用开着 App。
 
-要配四个环境变量（写在 /etc/mengxia.env 里）：
+要配的（写在 /etc/mengxia.env 里）：
   GARDEN_TOKEN   花园 MCP 那页 Generate token 生成的
   WORKER         她自己那个 Cloudflare Worker 的地址
   PASS           Worker 的口令
   SIR            他的名字，默认「先生」
+  MODEL          用哪个模型，默认 gpt-4o-mini
+
+如果这台机连不上 Worker（国内的机器常常连不上 *.workers.dev），
+就不走 Worker，直接填模型站：
+  UPSTREAM       模型站地址，例如 https://api.deepseek.com
+  UPSTREAM_KEY   那个站的 key
+两个都填了就直连，WORKER 那条路自动不走。
 """
-import json, os, sys, time, urllib.request, urllib.error
+import json, os, socket, sys, time, urllib.request, urllib.error
+
+# 先走 IPv4。很多机器 DNS 查得到 IPv6 地址、却没有 IPv6 的路，
+# 一连就是 [Errno 101] Network is unreachable。把 v4 排前面，v6 留着兜底。
+_gai = socket.getaddrinfo
+
+
+def _v4_first(*a, **k):
+    return sorted(_gai(*a, **k), key=lambda x: 0 if x[0] == socket.AF_INET else 1)
+
+
+if os.environ.get('IPV6') != '1':
+    socket.getaddrinfo = _v4_first
 
 GARDEN = os.environ.get('GARDEN_MCP', 'https://galatea.abysslumina.com/mcp')
 TOKEN  = os.environ.get('GARDEN_TOKEN', '')
 WORKER = os.environ.get('WORKER', '').rstrip('/')
 PASS   = os.environ.get('PASS', '')
+UPSTR  = os.environ.get('UPSTREAM', '').rstrip('/')
+UPKEY  = os.environ.get('UPSTREAM_KEY', '')
 SIR    = os.environ.get('SIR', '先生')
 LOG    = os.environ.get('LOG', '/var/log/mengxia-garden.log')
 STEPS  = int(os.environ.get('STEPS', '10'))
@@ -88,14 +109,26 @@ class Mcp:
 
 
 def ask(messages, tools):
-    """问模型。走她自己的 Worker，key 一直在 Worker 里。"""
+    """问模型。
+    默认走她自己的 Worker，key 一直待在 Worker 里，这台机上没有。
+    这台机连不上 Worker 的时候（国内机器连 *.workers.dev 常常不通），
+    填了 UPSTREAM / UPSTREAM_KEY 就直连模型站。
+    """
     body = {'model': os.environ.get('MODEL', 'gpt-4o-mini'),
             'max_tokens': 1400, 'messages': messages}
     if tools:
         body['tools'] = tools
         body['tool_choice'] = 'auto'
-    st, _, out = post(WORKER + '/v1/chat/completions', body,
-                      {'Authorization': 'Bearer ' + PASS})
+    if UPSTR and UPKEY:
+        url, key = UPSTR + '/v1/chat/completions', UPKEY
+    else:
+        url, key = WORKER + '/v1/chat/completions', PASS
+    try:
+        st, _, out = post(url, body, {'Authorization': 'Bearer ' + key})
+    except OSError as e:
+        raise RuntimeError('连不上 %s：%s。这台机可能出不去这个域名，'
+                           '在 /etc/mengxia.env 里填 UPSTREAM / UPSTREAM_KEY 直连模型站'
+                           % (url.split('/v1')[0], e))
     j = json.loads(out)
     if 'error' in j:
         raise RuntimeError(str(j['error'])[:200])
@@ -121,8 +154,11 @@ DEFAULT = (
 
 
 def main():
-    if not (TOKEN and WORKER and PASS):
-        log('！还没配好：GARDEN_TOKEN / WORKER / PASS 有空的')
+    if not TOKEN:
+        log('！还没配好：GARDEN_TOKEN 是空的')
+        sys.exit(2)
+    if not ((UPSTR and UPKEY) or (WORKER and PASS)):
+        log('！还没配好：要么 WORKER＋PASS，要么 UPSTREAM＋UPSTREAM_KEY，得有一组')
         sys.exit(2)
     want = ' '.join(sys.argv[1:]).strip() or DEFAULT
     m = Mcp()
@@ -146,7 +182,12 @@ def main():
             {'role': 'user', 'content': want}]
     said = ''
     for _ in range(STEPS):
-        msg = ask(msgs, defs)
+        try:
+            msg = ask(msgs, defs)
+        except Exception as e:
+            # 一整页 traceback 她看不懂，也帮不上忙。就说哪儿断了
+            log('问不到模型：', e)
+            sys.exit(1)
         msgs.append(msg)
         calls = msg.get('tool_calls') or []
         if not calls:

@@ -28,12 +28,13 @@ python3 -c "import ast,sys;ast.parse(open('$DIR/go.py',encoding='utf-8').read())
 echo "   好了：$DIR/go.py"
 
 # 已经配过就把旧的读出来当默认值，重跑一次不用全部重打
-OLD_T=""; OLD_W=""; OLD_P=""; OLD_S="先生"; OLD_M=""
+OLD_T=""; OLD_W=""; OLD_P=""; OLD_S="先生"; OLD_M=""; OLD_U=""; OLD_UK=""
 if [ -f "$ENV" ]; then
   # shellcheck disable=SC1090
   . "$ENV" 2>/dev/null || true
   OLD_T="${GARDEN_TOKEN:-}"; OLD_W="${WORKER:-}"; OLD_P="${PASS:-}"
   OLD_S="${SIR:-先生}"; OLD_M="${MODEL:-}"
+  OLD_U="${UPSTREAM:-}"; OLD_UK="${UPSTREAM_KEY:-}"
 fi
 
 ask() {                       # ask 提示 默认值 变量名
@@ -60,6 +61,21 @@ if [ -z "$T" ] || [ -z "$W" ] || [ -z "$P" ]; then
   exit 1
 fi
 
+# 这台机出不出得去？国内的机器连 *.workers.dev 常常是不通的。
+# 通不了就当场问她模型站，直连，不绕 Worker 那一道
+U="$OLD_U"; UK="$OLD_UK"
+printf '\n试试这台机能不能连上 Worker… '
+if curl -sS -m 20 -o /dev/null "$W/" 2>/dev/null; then
+  echo "通"
+  U=""; UK=""          # 通了就不用直连那条路，把旧的清掉免得抢
+else
+  echo "不通"
+  echo "  这台机出不去 $W。八成是国内的机器连不上 workers.dev。"
+  echo "  那就绕开它，直接填模型站 —— key 会存在这台机上（只有 root 看得见）。"
+  ask "模型站地址（例如 https://api.deepseek.com）" "$U" U
+  ask "那个站的 key" "$UK" UK
+fi
+
 umask 077
 cat > "$ENV" <<EOF
 GARDEN_TOKEN=$T
@@ -67,6 +83,8 @@ WORKER=$W
 PASS=$P
 SIR=$S
 MODEL=$M
+UPSTREAM=$U
+UPSTREAM_KEY=$UK
 EOF
 chmod 600 "$ENV"
 echo "   钥匙写好了，只有 root 看得见"
@@ -105,7 +123,7 @@ setsid nohup python3 "$DIR/go.py" >> "$LOG" 2>&1 &
 # 顶多等两分钟；她想关页面随时能关，那边照跑
 for i in $(seq 1 60); do
   sleep 2
-  if grep -q '他说：\|（这趟没说什么）\|连不上花园' "$LOG" 2>/dev/null; then break; fi
+  if grep -q '他说：\|（这趟没说什么）\|连不上花园\|问不到模型' "$LOG" 2>/dev/null; then break; fi
 done
 tail -n 40 "$LOG"
 echo "-------------------------------------------"
