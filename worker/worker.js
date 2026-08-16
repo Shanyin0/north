@@ -159,7 +159,16 @@ export default {
     // Worker 不受这个限制，所以让它代发一次，再把结果原样带回来。
     // 只准转花园那几个域名 —— 不然这就成了谁都能用的开放代理。
     if (path === '/relay' || path === '/relay-sse') {
-      if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
+      // EventSource 加不了请求头，所以 /relay-sse 的口令只能挂在网址上
+      const okPass = pass(req, env) || (path === '/relay-sse' && (() => {
+        const want = String(env.PASS || '').trim();
+        const got = String(url.searchParams.get('k') || '').trim();
+        if (!want || got.length !== want.length) return false;
+        let d = 0;
+        for (let i = 0; i < want.length; i++) d |= got.charCodeAt(i) ^ want.charCodeAt(i);
+        return d === 0;
+      })());
+      if (!okPass) return json({ error: whyNo(req, env) }, 401);
       const ok = (u) => {
         try {
           const h = new URL(u).host;
