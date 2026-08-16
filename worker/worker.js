@@ -95,7 +95,7 @@ export default {
         KV: !!env.BK,
         看得见的名字: names,
         上游: upHost,
-        这份代码: '2026-08-16 c'
+        这份代码: '2026-08-16 d'
       });
     }
 
@@ -154,7 +154,56 @@ export default {
       return text('只认 GET 和 PUT', 405);
     }
 
-    // ---------- 3. 小工具 ----------
+    // ---------- 3. 转一手 ----------
+    // 手机上的网页去请求别人家的域名会被跨域挡住（Failed to fetch）。
+    // Worker 不受这个限制，所以让它代发一次，再把结果原样带回来。
+    // 只准转花园那几个域名 —— 不然这就成了谁都能用的开放代理。
+    if (path === '/relay' || path === '/relay-sse') {
+      if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
+      const ok = (u) => {
+        try {
+          const h = new URL(u).host;
+          return /(^|\.)abysslumina\.com$/.test(h);
+        } catch (e) { return false; }
+      };
+
+      if (path === '/relay-sse') {
+        const u = url.searchParams.get('u') || '';
+        if (!ok(u)) return text('这个地址不给转', 403);
+        const tok = url.searchParams.get('t') || '';
+        let r;
+        try {
+          r = await fetch(u, { headers: tok ? { 'Authorization': 'Bearer ' + tok, 'Accept': 'text/event-stream' } : { 'Accept': 'text/event-stream' } });
+        } catch (e) { return text('连不上：' + e.message, 502); }
+        return new Response(r.body, {
+          status: r.status,
+          headers: Object.assign({
+            'Content-Type': r.headers.get('Content-Type') || 'text/event-stream',
+            'Cache-Control': 'no-cache'
+          }, CORS)
+        });
+      }
+
+      let q;
+      try { q = await req.json(); } catch (e) { return json({ error: '要 JSON' }, 400); }
+      if (!ok(q.u)) return json({ error: '这个地址不给转' }, 403);
+      const h = Object.assign({}, q.h || {});
+      let r;
+      try {
+        r = await fetch(q.u, {
+          method: q.m || 'POST', headers: h,
+          body: (q.m === 'GET' || q.m === 'HEAD') ? undefined : (q.b || '')
+        });
+      } catch (e) {
+        return json({ error: '连不上：' + e.message }, 502);
+      }
+      const body = await r.text();
+      const out = {};
+      try { r.headers.forEach((v, k) => { out[k.toLowerCase()] = v; }); } catch (e) {}
+      return json({ status: r.status, headers: out, body: body });
+    }
+
+    // ---------- 4. 小工具 ----------
     if (path.startsWith('/tool/')) {
       if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
       const name = path.slice('/tool/'.length);
