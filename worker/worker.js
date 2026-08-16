@@ -80,13 +80,22 @@ export default {
     // 门口什么都不说。谁路过都只看见 ok，看不出这后面是什么
     if (path === '/') return text('ok');
 
-    // 自检：只说"填没填"，不说填的是什么。她忘了哪个没配好的时候看这个
+    // 自检。只说填没填、名字叫什么，不说值是什么。
+    // 名字不是秘密，但打错一个字母就全盘不通，所以干脆列出来给她看
     if (path === '/ping') {
+      let names = [];
+      try { names = Object.keys(env).sort(); } catch (e) {}
+      const up = String(env.UPSTREAM || '');
+      let upHost = '';
+      try { upHost = up ? new URL(up).host : ''; } catch (e) { upHost = '(不像个网址：' + up.slice(0, 30) + ')'; }
       return json({
         PASS: !!env.PASS,
         UPSTREAM: !!env.UPSTREAM,
         UPSTREAM_KEY: !!env.UPSTREAM_KEY,
-        KV: !!env.BK
+        KV: !!env.BK,
+        看得见的名字: names,
+        上游: upHost,
+        这份代码: '2026-08-16 c'
       });
     }
 
