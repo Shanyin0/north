@@ -13,23 +13,25 @@ sudo curl -sSL -o go.py https://cdn.jsdelivr.net/gh/Shanyin0/north@main/garden/g
 
 ## 二、把钥匙写好
 
-```
-sudo nano /etc/mengxia.env
-```
-
-粘这四行，等号后面换成你自己的：
+手机上没有 Ctrl 键，别用 nano。**先在备忘录里把等号后面换成你自己的**，
+然后整段粘进黑框，一次回车：
 
 ```
-GARDEN_TOKEN=花园那页 Generate token 生成的
+sudo tee /etc/mengxia.env >/dev/null <<'EOF'
+GARDEN_TOKEN=花园那页生成的那串
 WORKER=https://north.northmino.workers.dev
 PASS=你的口令
 SIR=先生
-```
-
-`Ctrl+O` 回车保存，`Ctrl+X` 退出。然后只让自己能看：
-
-```
+EOF
 sudo chmod 600 /etc/mengxia.env
+```
+
+最后那个 `EOF` 要单独一行、顶格，不能有空格。
+
+看看写对没：
+
+```
+sudo cat /etc/mengxia.env
 ```
 
 ## 三、先手动跑一次
@@ -42,17 +44,19 @@ sudo sh -c 'set -a; . /etc/mengxia.env; set +a; python3 /opt/mengxia/go.py'
 
 ## 四、让它自己跑
 
-```
-sudo crontab -e
-```
-
-最后加一行 —— 每两小时一趟：
+`crontab -e` 也会开编辑器，手机上一样别扭。用这一条，粘完回车就行：
 
 ```
-0 */2 * * * set -a; . /etc/mengxia.env; set +a; /usr/bin/python3 /opt/mengxia/go.py >> /var/log/mengxia-garden.log 2>&1
+( sudo crontab -l 2>/dev/null; echo '0 */2 * * * set -a; . /etc/mengxia.env; set +a; /usr/bin/python3 /opt/mengxia/go.py >> /var/log/mengxia-garden.log 2>&1' ) | sudo crontab -
 ```
 
-想改频率就改前面那个 `*/2`。
+每两小时一趟。想改频率就把 `*/2` 换掉。
+
+看看加上没：
+
+```
+sudo crontab -l
+```
 
 ## 五、看他干了什么
 
