@@ -33,6 +33,7 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
+    private boolean pickerOpen = false;   // 选图的窗口是不是还开着
     private boolean loadFailed = false;
     private PermissionRequest pendingMic;
 
@@ -139,17 +140,57 @@ public class MainActivity extends Activity {
             @Override
             public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb,
                                              FileChooserParams params) {
-                if (filePathCallback != null) filePathCallback.onReceiveValue(null);
-                filePathCallback = cb;
-                try {
-                    Intent intent = params.createIntent();
-                    intent.addCategory(Intent.CATEGORY_OPENABLE);
-                    startActivityForResult(Intent.createChooser(intent, "选一张"), FILE_PICK);
-                    return true;
-                } catch (Exception e) {
+                // 上一次没收尾的先收掉。不收的话 WebView 会一直以为选图还没结束，
+                // 之后再点任何一个"选图片"都没反应 —— 相册加不进去照片就是卡在这儿
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);
                     filePathCallback = null;
-                    return false;
                 }
+                filePathCallback = cb;
+
+                boolean many = false;
+                try { many = params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE; } catch (Exception e) {}
+
+                // 一、先按 WebView 自己给的意图开。别拿 createChooser 包 ——
+                //     有些手机的相册被包一层之后只肯回一张，甚至什么都不回
+                try {
+                    Intent it = params.createIntent();
+                    if (it != null) {
+                        it.addCategory(Intent.CATEGORY_OPENABLE);
+                        if (many) it.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                        pickerOpen = true;
+                        startActivityForResult(it, FILE_PICK);
+                        return true;
+                    }
+                } catch (Exception e) { /* 换下一种 */ }
+
+                // 二、退一步用系统文档选择器。这个在国产系统上最稳
+                try {
+                    Intent it = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    it.addCategory(Intent.CATEGORY_OPENABLE);
+                    it.setType("image/*");
+                    if (many) it.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    pickerOpen = true;
+                    startActivityForResult(it, FILE_PICK);
+                    return true;
+                } catch (Exception e) { /* 再退一步 */ }
+
+                // 三、再退一步用取内容。老系统只认这个
+                try {
+                    Intent it = new Intent(Intent.ACTION_GET_CONTENT);
+                    it.addCategory(Intent.CATEGORY_OPENABLE);
+                    it.setType("image/*");
+                    if (many) it.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    pickerOpen = true;
+                    startActivityForResult(Intent.createChooser(it, "选照片"), FILE_PICK);
+                    return true;
+                } catch (Exception e) { /* 认了 */ }
+
+                // 全都开不起来，也得把话说完，不然下一次点还是没反应
+                pickerOpen = false;
+                filePathCallback.onReceiveValue(null);
+                filePathCallback = null;
+                return false;
             }
 
             @Override
@@ -254,14 +295,44 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == FILE_PICK) {
+            pickerOpen = false;
             if (filePathCallback != null) {
-                filePathCallback.onReceiveValue(
-                        WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                filePathCallback.onReceiveValue(pickedFrom(resultCode, data));
                 filePathCallback = null;
             }
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    /** 多选回来的在 ClipData 里，单选在 data 上。parseResult 有的机型接不住，自己拆一遍 */
+    private Uri[] pickedFrom(int resultCode, Intent data) {
+        if (resultCode != Activity.RESULT_OK || data == null) return null;
+        try {
+            android.content.ClipData clip = data.getClipData();
+            if (clip != null && clip.getItemCount() > 0) {
+                Uri[] out = new Uri[clip.getItemCount()];
+                for (int i = 0; i < clip.getItemCount(); i++) out[i] = clip.getItemAt(i).getUri();
+                return out;
+            }
+        } catch (Exception e) {}
+        Uri one = data.getData();
+        if (one != null) return new Uri[]{ one };
+        try {
+            return WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+        } catch (Exception e) { return null; }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 选图那一趟没走完就回来了（返回键、系统把相册杀了、内存不够把这个页面回收了）。
+        // 这时候必须把话说完，不然 WebView 会一直卡在"还在选"，
+        // 之后不管点多少次加照片都毫无反应
+        if (filePathCallback != null && !pickerOpen) {
+            filePathCallback.onReceiveValue(null);
+            filePathCallback = null;
+        }
     }
 
     @Override
