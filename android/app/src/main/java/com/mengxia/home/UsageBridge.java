@@ -138,9 +138,13 @@ public class UsageBridge {
             }
 
             PackageManager pm = ctx.getPackageManager();
+            java.util.HashSet<String> real = launchable(pm);
             for (java.util.Map.Entry<String, long[]> en : agg.entrySet()) {
                 long[] a = en.getValue();
                 if (a[2] < 8000 && a[3] < 2) continue;      // 划过去一下不算
+                // 桌面上没有图标的一律不算：权限控制器、软件包安装程序、
+                // 安全认证服务、IntentResolver 那一类，都是系统自己在动
+                if (!real.isEmpty() && !real.contains(en.getKey())) continue;
                 JSONObject o = new JSONObject();
                 o.put("p", en.getKey());
                 o.put("n", label(pm, en.getKey()));
@@ -237,6 +241,24 @@ public class UsageBridge {
         } catch (Exception ex) {
             return "";
         }
+    }
+
+    /** 桌面上真有一个图标能点进去的那些包 */
+    private static java.util.HashSet<String> launchable(PackageManager pm) {
+        java.util.HashSet<String> out = new java.util.HashSet<>();
+        try {
+            Intent it = new Intent(Intent.ACTION_MAIN);
+            it.addCategory(Intent.CATEGORY_LAUNCHER);
+            java.util.List<android.content.pm.ResolveInfo> list = pm.queryIntentActivities(it, 0);
+            if (list != null) {
+                for (android.content.pm.ResolveInfo ri : list) {
+                    if (ri != null && ri.activityInfo != null && ri.activityInfo.packageName != null) {
+                        out.add(ri.activityInfo.packageName);
+                    }
+                }
+            }
+        } catch (Exception e) { /* 问不到就当没这回事，宁可多显示也不要一片空白 */ }
+        return out;
     }
 
     private static String label(PackageManager pm, String pkg) {
