@@ -29,18 +29,30 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: 算版本号
+        # 第三位不过 9：满十就往中间那位进一。
+        # 1.0.9 之后是 1.1，然后 1.1.1 … 1.1.9，再然后 1.2。
+        # OFFSET 是因为 1.0.10 已经发出去过一次，把它那一格让开。
+        run: |
+          N=$(( ${{ github.run_number }} - 1 ))
+          MINOR=$(( N / 10 ))
+          PATCH=$(( N % 10 ))
+          if [ "$PATCH" = "0" ]; then VER="1.$MINOR"; else VER="1.$MINOR.$PATCH"; fi
+          echo "VER=$VER" >> $GITHUB_ENV
+          echo "打出来的是 $VER"
+
       - name: 打包
         working-directory: android
         run: |
           gradle --no-daemon assembleRelease \
             -PappVersionCode=${{ github.run_number }} \
-            -PappVersionName=1.0.${{ github.run_number }}
+            -PappVersionName=$VER
 
       - name: 改个名字
         run: |
           mkdir -p out
           cp android/app/build/outputs/apk/release/app-release.apk \
-             "out/mengxia-1.0.${{ github.run_number }}.apk"
+             "out/mengxia-$VER.apk"
           ls -la out
 
       - name: 存一份（Actions 里可下载）
@@ -55,5 +67,5 @@ jobs:
         run: |
           gh release delete apk --yes --cleanup-tag || true
           gh release create apk out/*.apk \
-            --title "梦匣 App · 1.0.${{ github.run_number }}" \
+            --title "梦匣 App · $VER" \
             --notes "手机上点下面的 .apk 就能装。装过一次之后，以后更新前端不用重装，重开 App 就是新的。"
