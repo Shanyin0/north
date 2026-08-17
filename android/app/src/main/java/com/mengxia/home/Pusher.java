@@ -188,7 +188,7 @@ public class Pusher {
             JSONObject cfg = new JSONObject(cfgStr);
             if (blocked(ctx, cfg).length() > 0) return;
 
-            String reply = callModel(cfg);
+            String reply = callModel(ctx, cfg);
             if (reply == null) return;
             reply = clean(reply);
             if (reply.length() == 0) return;
@@ -221,14 +221,25 @@ public class Pusher {
     }
 
     // ---------- 调模型（影子路由） ----------
-    private static String callModel(JSONObject cfg) {
+    private static String callModel(Context ctx, JSONObject cfg) {
         try {
             String mode = cfg.optString("apiMode", "");
             String key = cfg.optString("apiKey", "");
             if (key.length() == 0) return null;
 
+            // 她要是把「肩后」开着，就现读一遍这几个小时她在手机上干了什么。
+            // 网页那边存的是她自己的一份，这里是壳在后台自己读的 —— 后台醒来的时候网页多半没在跑。
+            String eye = "";
+            if (cfg.optBoolean("eyeOn", false)) {
+                try { eye = UsageBridge.brief(ctx, 6, cfg.optString("eyeMute", "")); } catch (Exception ig) {}
+            }
             String shadow = "<system_trigger>\n现在是 " + timeStr() + "。\n她此刻大概："
-                    + userStatus() + "。\n\n" + cfg.optString("shadowBody", "") + "\n</system_trigger>";
+                    + userStatus() + "。\n\n"
+                    + (eye.length() > 0
+                        ? "[她这几个小时在手机上干嘛]\n" + eye
+                          + "\n这是背景，不是话题。别拿它盘问她，也别每次都说「我看见你在刷」——大多数时候它只该影响你说话的语气。\n\n"
+                        : "")
+                    + cfg.optString("shadowBody", "") + "\n</system_trigger>";
 
             JSONArray recent = cfg.optJSONArray("messages");
             if (recent == null) recent = new JSONArray();
