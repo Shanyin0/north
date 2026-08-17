@@ -227,7 +227,7 @@ public class Pusher {
             String key = cfg.optString("apiKey", "");
             if (key.length() == 0) return null;
 
-            // 她要是把「肩后」开着，就现读一遍这几个小时她在手机上干了什么。
+            // 她要是把「余光」开着，就现读一遍这几个小时她在手机上干了什么。
             // 网页那边存的是她自己的一份，这里是壳在后台自己读的 —— 后台醒来的时候网页多半没在跑。
             String eye = "";
             if (cfg.optBoolean("eyeOn", false)) {
