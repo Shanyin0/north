@@ -36,8 +36,6 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> filePathCallback;
     private boolean pickerOpen = false;   // 选图的窗口是不是还开着
     private boolean loadFailed = false;
-    // 这一次是什么时候打开的。刚打开没多久才敢自己翻新，久了她可能正打字
-    private long startedAt = System.currentTimeMillis();
     private PermissionRequest pendingMic;
 
     private String siteUrl() {
@@ -130,7 +128,8 @@ public class MainActivity extends Activity {
                 return false; // 一切都留在 App 里
             }
 
-            // 主页面从本地那一份出，网址不变（换成 file:// 的话她的东西会全丢）
+            // 主页面这一趟自己去拿：先上网，网不行才用本地存的那份。
+            // 网址始终不变（换成 file:// 的话她的东西会全丢）
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
                 try {
@@ -138,6 +137,13 @@ public class MainActivity extends Activity {
                     if (!"GET".equalsIgnoreCase(req.getMethod())) return null;
                     String u = req.getUrl() == null ? "" : req.getUrl().toString();
                     if (!PageCache.isMain(u, siteUrl())) return null;
+
+                    byte[] fresh = PageCache.fetchFresh(MainActivity.this, u);
+                    if (fresh != null) {
+                        return new WebResourceResponse("text/html", "utf-8",
+                                new java.io.ByteArrayInputStream(fresh));
+                    }
+                    // 网不通。本地有存货就先顶上，总比白屏强
                     if (!PageCache.has(MainActivity.this)) return null;
                     return new WebResourceResponse("text/html", "utf-8", PageCache.open(MainActivity.this));
                 } catch (Exception e) { return null; }
@@ -269,24 +275,8 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(siteUrl());
 
-        // 页面开起来之后马上去看有没有新的。有新的就当场换上 ——
-        // 不换的话她永远慢一步：这次开看的是上次存的。
-        // 拉不到也不影响这一次，本地那份一直在。
-        web.postDelayed(new Runnable() {
-            public void run() {
-                PageCache.refresh(MainActivity.this, siteUrl(), new Runnable() {
-                    public void run() {
-                        web.post(new Runnable() {
-                            public void run() {
-                                // 她要是已经在打字了就别打断，等下次开
-                                if (System.currentTimeMillis() - startedAt > 30000) return;
-                                try { web.reload(); } catch (Exception ignored) {}
-                            }
-                        });
-                    }
-                });
-            }
-        }, 1500);
+        // 这一趟拿的就已经是最新的了（上面 shouldInterceptRequest 里先联网），
+        // 所以不用再补一次后台刷新，也不会再出现「慢一步」那件事。
     }
 
     private boolean hasMic() {
