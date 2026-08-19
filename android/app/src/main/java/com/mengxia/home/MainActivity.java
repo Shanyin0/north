@@ -17,6 +17,7 @@ import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -127,9 +128,24 @@ public class MainActivity extends Activity {
                 return false; // 一切都留在 App 里
             }
 
+            // 主页面从本地那一份出，网址不变（换成 file:// 的话她的东西会全丢）
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
+                try {
+                    if (req == null || !req.isForMainFrame()) return null;
+                    if (!"GET".equalsIgnoreCase(req.getMethod())) return null;
+                    String u = req.getUrl() == null ? "" : req.getUrl().toString();
+                    if (!PageCache.isMain(u, siteUrl())) return null;
+                    if (!PageCache.has(MainActivity.this)) return null;
+                    return new WebResourceResponse("text/html", "utf-8", PageCache.open(MainActivity.this));
+                } catch (Exception e) { return null; }
+            }
+
             @Override
             public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
                 if (req != null && req.isForMainFrame()) {
+                    // 本地有存货就不算失败 —— 那一份已经把页面撑起来了
+                    if (PageCache.has(MainActivity.this)) return;
                     loadFailed = true;
                     askForUrl(true);
                 }
@@ -237,6 +253,12 @@ public class MainActivity extends Activity {
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(siteUrl());
+
+        // 页面开起来之后再去看有没有新的。拉到了下次打开就是新的，
+        // 拉不到也不影响这一次 —— 本地那份一直在。
+        web.postDelayed(new Runnable() {
+            public void run() { PageCache.refresh(MainActivity.this, siteUrl()); }
+        }, 4000);
     }
 
     private boolean hasMic() {
