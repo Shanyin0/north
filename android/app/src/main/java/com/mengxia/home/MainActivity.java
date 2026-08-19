@@ -128,7 +128,10 @@ public class MainActivity extends Activity {
                 return false; // 一切都留在 App 里
             }
 
-            // 主页面这一趟自己去拿：先上网，网不行才用本地存的那份。
+            // 主页面：手边有什么就先开什么，一秒都不等网。
+            // 手边的东西 = 装 APK 时带进来的那一份，或者之前下载存下的那一份。
+            // 所以梯子开不开、WiFi 还是流量、甚至断网，都进得去。
+            // 新页面交给网页自己去换（它开起来会对版本号）。
             // 网址始终不变（换成 file:// 的话她的东西会全丢）
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest req) {
@@ -137,14 +140,7 @@ public class MainActivity extends Activity {
                     if (!"GET".equalsIgnoreCase(req.getMethod())) return null;
                     String u = req.getUrl() == null ? "" : req.getUrl().toString();
                     if (!PageCache.isMain(u, siteUrl())) return null;
-
-                    byte[] fresh = PageCache.fetchFresh(MainActivity.this, u);
-                    if (fresh != null) {
-                        return new WebResourceResponse("text/html", "utf-8",
-                                new java.io.ByteArrayInputStream(fresh));
-                    }
-                    // 网不通。本地有存货就先顶上，总比白屏强
-                    if (!PageCache.has(MainActivity.this)) return null;
+                    if (!PageCache.hasAny(MainActivity.this)) return null;   // 手边真的什么都没有，交给 WebView
                     return new WebResourceResponse("text/html", "utf-8", PageCache.open(MainActivity.this));
                 } catch (Exception e) { return null; }
             }
@@ -152,8 +148,8 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
                 if (req != null && req.isForMainFrame()) {
-                    // 本地有存货就不算失败 —— 那一份已经把页面撑起来了
-                    if (PageCache.has(MainActivity.this)) return;
+                    // 手边有存货就不算失败 —— 那一份已经把页面撑起来了
+                    if (PageCache.hasAny(MainActivity.this)) return;
                     loadFailed = true;
                     askForUrl(true);
                 }
@@ -275,8 +271,11 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(siteUrl());
 
-        // 这一趟拿的就已经是最新的了（上面 shouldInterceptRequest 里先联网），
-        // 所以不用再补一次后台刷新，也不会再出现「慢一步」那件事。
+        // 页面已经用手边那份开起来了。这会儿再悄悄去把存货换成新的，
+        // 下次开更快。这一趟的新页面不靠它 —— 网页自己会去对版本号。
+        web.postDelayed(new Runnable() {
+            public void run() { PageCache.refreshLater(MainActivity.this, siteUrl()); }
+        }, 3000);
     }
 
     private boolean hasMic() {

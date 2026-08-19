@@ -17,14 +17,20 @@ import java.net.URL;
  * 挂着梯子的时候那一下常常被卡住，于是就白屏 —— 明明 App 装着，
  * 却因为网不通打不开。
  *
- * 头一版是「先拿本地那份开，开完后台再去看有没有新的」。那样有个坑：
- * 这一次看到的永远是上一次存的，慢一步；后台那一趟要是也没成
- * （挂着梯子最容易），她就一直卡在某个旧版本上，我改了什么她都看不见。
- * 她为这个问过我好几次「你到底传了没有」—— 传了，是这儿把她挡住了。
+ * 中间试过两版都不对：
+ * 一、「先拿本地那份开，后台再去看新的」—— 这一次看到的永远是上一次存的，
+ *     慢一步；后台那趟没成，她就永远卡在旧版本。
+ * 二、「先去网上拿，拿不到才用本地」—— 新是新了，可开 App 得等网。
+ *     她开着梯子、关着梯子、WiFi、流量，四种情况里总有一种要她干等。
  *
- * 现在反过来：<b>先去网上拿</b>，拿到就用最新的、顺手存一份；
- * 六秒还没个动静、或者根本连不上，才把本地那份端出来。
- * 网好的时候她永远看的是最新的，网坏的时候照样进得去，不白屏。
+ * 现在这一版：<b>手边有什么就先开什么，一秒不等</b>。
+ * 手边的东西有两份：装 APK 时一起装进来的那一份（assets/page.html），
+ * 和之前下载过存下来的那一份。所以哪怕她从来没联过网，App 也开得起来 ——
+ * 梯子开不开、WiFi 还是流量，都进得去。
+ *
+ * 那怎么拿到新的？交给网页自己：它开起来一秒半之后会去拉一个几十字节的
+ * build.txt 对版本号，不一样就把新的抓回来当场换上。壳这边也在后台
+ * 顺手更新一次存货，下次开就更快。两条路都断了也无所谓 —— 她照样能用。
  *
  * 有一点很要紧：不能改成 file:// 去加载。localStorage 是按网址分家的，
  * 一换网址她所有的东西（聊天、日记、相册、账本）都会像凭空消失。
@@ -34,6 +40,8 @@ import java.net.URL;
 public class PageCache {
 
     private static final String FILE = "page_cache.html";
+    // 打包时一起装进 APK 的那一份（.github/workflows 里 cp 进去的）
+    private static final String ASSET = "page.html";
     // 太小的多半是报错页或者半截，别拿它覆盖好的
     private static final int MIN_OK = 200 * 1024;
 
@@ -44,19 +52,37 @@ public class PageCache {
         return f.exists() && f.length() > MIN_OK;
     }
 
-    /** 本地那一份，拿来喂给 WebView */
+    /**
+     * 手边这一份，拿来喂给 WebView。
+     * 先用下载过的；一次都没下载成功过，就用装 APK 时一起装进来的那一份。
+     * 所以哪怕她从来没联过网，App 也开得起来。
+     */
     static InputStream open(Context ctx) {
-        try { return new FileInputStream(file(ctx)); }
-        catch (Exception e) { return new ByteArrayInputStream(new byte[0]); }
+        try { if (has(ctx)) return new FileInputStream(file(ctx)); } catch (Exception ignored) {}
+        try { return ctx.getAssets().open(ASSET); } catch (Exception ignored) {}
+        return new ByteArrayInputStream(new byte[0]);
+    }
+
+    /** 手边到底有没有东西可开 —— 下载的、或者装进来的，有一个就算 */
+    static boolean hasAny(Context ctx) {
+        if (has(ctx)) return true;
+        try { ctx.getAssets().open(ASSET).close(); return true; }
+        catch (Exception e) { return false; }
     }
 
     /**
-     * 主页面这一趟：先去网上拿，拿到就用新的；拿不到再用本地存的那份。
-     *
-     * 这个方法是在后台线程上跑的（shouldInterceptRequest 本来就不在主线程），
-     * 所以在这儿联网没问题。超时给得短，网卡住也不至于让她盯着白屏干等。
-     *
-     * 返回 null = 我们也没辙了，交给 WebView 自己去试。
+     * 后台去把存货换成新的。开页面不等它 —— 她那一趟早就用手边的开起来了。
+     * 拉到了下次开更快；拉不到就算了，什么都不影响。
+     */
+    static void refreshLater(final Context ctx, final String site) {
+        new Thread(new Runnable() {
+            public void run() { fetchFresh(ctx, site); }
+        }).start();
+    }
+
+    /**
+     * 去网上拿一份新的存起来。在后台线程上跑。
+     * 返回 null = 没拿到。
      */
     static byte[] fetchFresh(Context ctx, String site) {
         HttpURLConnection con = null;

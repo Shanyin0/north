@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'android/**'
+      - 'index.html'
       - '.github/workflows/build-apk.yml'
 
 permissions:
@@ -40,6 +41,15 @@ jobs:
           if [ "$PATCH" = "0" ]; then VER="1.$MINOR"; else VER="1.$MINOR.$PATCH"; fi
           echo "VER=$VER" >> $GITHUB_ENV
           echo "打出来的是 $VER"
+
+      - name: 把页面塞进 APK
+        # 装在壳里的这一份是「不联网也能开」的底子。
+        # 开起来之后网页自己会去对版本号，有新的就换成新的。
+        run: |
+          mkdir -p android/app/src/main/assets
+          cp index.html android/app/src/main/assets/page.html
+          cp build.txt android/app/src/main/assets/build.txt || true
+          ls -la android/app/src/main/assets
 
       - name: 打包
         working-directory: android
