@@ -91,9 +91,7 @@ public class Pusher {
             File f = new File(ctx.getFilesDir(), "sir_avatar.png");
             if (f.exists()) return square(BitmapFactory.decodeFile(f.getAbsolutePath()));
         } catch (Exception ignored) {}
-        try {
-            return square(BitmapFactory.decodeResource(ctx.getResources(), R.mipmap.ic_launcher));
-        } catch (Exception ignored) {}
+        // 没有他的脸就宁可什么都不放 —— 别拿软件图标顶上
         return null;
     }
 
@@ -190,10 +188,21 @@ public class Pusher {
 
             String reply = callModel(ctx, cfg);
             if (reply == null) return;
-            reply = clean(reply);
-            if (reply.length() == 0) return;
+            reply = strip(reply);
+            if (reply.trim().length() == 0) return;
 
-            addPending(ctx, reply);
+            // 他想分几条就是几条 —— 一行一条，别糊成一整段
+            String[] lines = reply.split("\n");
+            int sent = 0;
+            for (String raw : lines) {
+                String one = clean(raw);
+                if (one.length() == 0) continue;
+                addPending(ctx, one);
+                if (sent > 0) { try { Thread.sleep(700); } catch (InterruptedException ig) {} }
+                notify(ctx, cfg.optString("sirName", "先生"), one);
+                if (++sent >= 5) break;
+            }
+            if (sent == 0) return;
             SharedPreferences.Editor e = sp.edit();
             e.putLong("lastMsgTs", System.currentTimeMillis());
             e.putInt("cooldown", 120 + new Random().nextInt(91));
@@ -203,8 +212,22 @@ public class Pusher {
             e.putInt("usedToday", used + 1);
             e.apply();
 
-            notify(ctx, cfg.optString("sirName", "先生"), reply);
         } catch (Exception ignored) {}
+    }
+
+    /** 只把标签和代码块去掉，换行留着 —— 换行就是"他分了几条" */
+    private static String strip(String t) {
+        if (t == null) return "";
+        return t.replaceAll("(?s)<think>.*?</think>", "")
+                .replaceAll("(?s)<thinking>.*?</thinking>", "")
+                .replaceAll("(?s)<status>.*?</status>", "")
+                .replaceAll("(?s)<photo>.*?</photo>", "")
+                .replaceAll("(?s)<draw>.*?</draw>", "")
+                .replaceAll("(?s)<mark>.*?</mark>", "")
+                .replaceAll("(?s)<moment>.*?</moment>", "")
+                .replaceAll("(?s)<diary>.*?</diary>", "")
+                .replaceAll("(?s)```.*?```", "")
+                .trim();
     }
 
     private static String clean(String t) {
@@ -355,7 +378,7 @@ public class Pusher {
             Notification.Builder b;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b = new Notification.Builder(ctx, CH_ID);
             else b = new Notification.Builder(ctx);
-            b.setSmallIcon(R.mipmap.ic_launcher)
+            b.setSmallIcon(R.drawable.ic_noti)
                     .setContentTitle(title)
                     .setContentText(text)
                     .setAutoCancel(true)
