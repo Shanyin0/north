@@ -36,6 +36,8 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> filePathCallback;
     private boolean pickerOpen = false;   // 选图的窗口是不是还开着
     private boolean loadFailed = false;
+    // 这一次是什么时候打开的。刚打开没多久才敢自己翻新，久了她可能正打字
+    private long startedAt = System.currentTimeMillis();
     private PermissionRequest pendingMic;
 
     private String siteUrl() {
@@ -239,6 +241,19 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new SaveBridge(this), "MengxiaNative");
         web.addJavascriptInterface(new UsageBridge(this), "MengxiaUsage");
         web.addJavascriptInterface(new XBridge(this), "MengxiaX");
+        // 她自己想强行去拿一份最新的页面时用：把存的那份丢掉，再从网上下一次
+        web.addJavascriptInterface(new Object() {
+            @android.webkit.JavascriptInterface
+            public void fresh() {
+                PageCache.drop(MainActivity.this);
+                web.post(new Runnable() {
+                    public void run() {
+                        try { web.clearCache(true); } catch (Exception ignored) {}
+                        try { web.loadUrl(siteUrl()); } catch (Exception ignored) {}
+                    }
+                });
+            }
+        }, "MengxiaShell");
 
         // 主动推送：挂上定时闹钟，并要一次通知权限
         Pusher.schedule(getApplicationContext());
@@ -254,11 +269,24 @@ public class MainActivity extends Activity {
         if (savedInstanceState != null) web.restoreState(savedInstanceState);
         else web.loadUrl(siteUrl());
 
-        // 页面开起来之后再去看有没有新的。拉到了下次打开就是新的，
-        // 拉不到也不影响这一次 —— 本地那份一直在。
+        // 页面开起来之后马上去看有没有新的。有新的就当场换上 ——
+        // 不换的话她永远慢一步：这次开看的是上次存的。
+        // 拉不到也不影响这一次，本地那份一直在。
         web.postDelayed(new Runnable() {
-            public void run() { PageCache.refresh(MainActivity.this, siteUrl()); }
-        }, 4000);
+            public void run() {
+                PageCache.refresh(MainActivity.this, siteUrl(), new Runnable() {
+                    public void run() {
+                        web.post(new Runnable() {
+                            public void run() {
+                                // 她要是已经在打字了就别打断，等下次开
+                                if (System.currentTimeMillis() - startedAt > 30000) return;
+                                try { web.reload(); } catch (Exception ignored) {}
+                            }
+                        });
+                    }
+                });
+            }
+        }, 1500);
     }
 
     private boolean hasMic() {
