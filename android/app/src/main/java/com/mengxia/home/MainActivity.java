@@ -222,6 +222,7 @@ public class MainActivity extends Activity {
 
         web.addJavascriptInterface(new SaveBridge(this), "MengxiaNative");
         web.addJavascriptInterface(new UsageBridge(this), "MengxiaUsage");
+        web.addJavascriptInterface(new XBridge(this), "MengxiaX");
 
         // 主动推送：挂上定时闹钟，并要一次通知权限
         Pusher.schedule(getApplicationContext());
