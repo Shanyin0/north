@@ -255,6 +255,25 @@ public class MainActivity extends Activity {
                     }
                 });
             }
+
+            /**
+             * 拿别的 App 打开一个网址（推特、浏览器之类）。
+             * 走系统的 ACTION_VIEW，装了推特就直接进推特。
+             * 不这么做的话链接会在梦匣自己的 WebView 里打开，把她挤出去。
+             */
+            @android.webkit.JavascriptInterface
+            public void openUrl(final String u) {
+                if (u == null || u.length() == 0) return;
+                web.post(new Runnable() {
+                    public void run() {
+                        try {
+                            Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(u));
+                            it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(it);
+                        } catch (Exception ignored) {}
+                    }
+                });
+            }
         }, "MengxiaShell");
 
         // 主动推送：挂上定时闹钟，并要一次通知权限
