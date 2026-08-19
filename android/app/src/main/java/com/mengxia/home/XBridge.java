@@ -106,55 +106,131 @@ public class XBridge {
 
     // ---------- 真正干活的 ----------
 
+    /** 一次请求的结果 */
+    private static class Res {
+        int code; String raw = ""; long skew = 0;
+    }
+
+    /**
+     * 真正发一次。host 是 api.x.com 或者 api.twitter.com —— 有些号在新域名下会 401，
+     * 老域名反而通，所以这里两个都要能试。
+     */
+    private Res call(String host, String method, String path, String body) throws Exception {
+        String url = "https://" + host + path;
+        String auth = oauthHeader(method, url);
+        HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
+        con.setRequestMethod(method);
+        con.setConnectTimeout(20000);
+        con.setReadTimeout(30000);
+        con.setRequestProperty("Authorization", auth);
+        if (body != null) {
+            con.setDoOutput(true);
+            con.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            OutputStream os = con.getOutputStream();
+            os.write(body.getBytes("UTF-8"));
+            os.close();
+        }
+        Res r = new Res();
+        r.code = con.getResponseCode();
+        // 顺手记一下手机的表跟人家差多少 —— OAuth 1.0a 对时间很敏感，差太多就一直 401
+        try {
+            long srv = con.getHeaderFieldDate("Date", 0);
+            if (srv > 0) r.skew = (System.currentTimeMillis() - srv) / 1000L;
+        } catch (Exception ig) {}
+        InputStream in = (r.code >= 400) ? con.getErrorStream() : con.getInputStream();
+        StringBuilder sb = new StringBuilder();
+        if (in != null) {
+            BufferedReader br = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            br.close();
+        }
+        con.disconnect();
+        r.raw = sb.toString();
+        return r;
+    }
+
+    /** 把 x 那边绕来绕去的错误挑一句人能看懂的 */
+    private static String why(Res r) {
+        String w = r.raw;
+        try {
+            JSONObject j = new JSONObject(r.raw);
+            if (j.has("detail")) w = j.optString("detail");
+            else if (j.has("title")) w = j.optString("title");
+            else if (j.has("errors")) w = j.getJSONArray("errors").getJSONObject(0).optString("message", r.raw);
+        } catch (Exception ig) {}
+        return w == null ? "" : w;
+    }
+
     private String doPost(String text) throws Exception {
         if (!ready()) return err("四把钥匙还没填全");
         String body = new JSONObject().put("text", String.valueOf(text)).toString();
-        String url = "https://api.x.com/2/tweets";
-        String auth = oauthHeader("POST", url);
-
-        HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
-        con.setRequestMethod("POST");
-        con.setConnectTimeout(20000);
-        con.setReadTimeout(30000);
-        con.setDoOutput(true);
-        con.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-        con.setRequestProperty("Authorization", auth);
-        OutputStream os = con.getOutputStream();
-        os.write(body.getBytes("UTF-8"));
-        os.close();
-
-        int code = con.getResponseCode();
-        InputStream in = (code >= 400) ? con.getErrorStream() : con.getInputStream();
-        StringBuilder sb = new StringBuilder();
-        if (in != null) {
-            BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"));
-            String line;
-            while ((line = r.readLine()) != null) sb.append(line);
-            r.close();
+        Res r = call("api.x.com", "POST", "/2/tweets", body);
+        if (r.code == 401) {
+            Res r2 = call("api.twitter.com", "POST", "/2/tweets", body);
+            if (r2.code != 401) r = r2;
         }
-        con.disconnect();
-        String raw = sb.toString();
 
         JSONObject out = new JSONObject();
-        if (code >= 200 && code < 300) {
+        if (r.code >= 200 && r.code < 300) {
             out.put("ok", true);
-            try { out.put("id", new JSONObject(raw).getJSONObject("data").optString("id", "")); } catch (Exception ig) {}
+            try { out.put("id", new JSONObject(r.raw).getJSONObject("data").optString("id", "")); } catch (Exception ig) {}
             return out.toString();
         }
         out.put("ok", false);
-        out.put("code", code);
-        // x 那边的错误话说得很绕，尽量挑一句人能看懂的出来
-        String why = raw;
-        try {
-            JSONObject j = new JSONObject(raw);
-            if (j.has("detail")) why = j.optString("detail");
-            else if (j.has("title")) why = j.optString("title");
-            else if (j.has("errors")) why = j.getJSONArray("errors").getJSONObject(0).optString("message", raw);
-        } catch (Exception ig) {}
-        if (code == 401) why = "钥匙不对，或者 Access Token 是在改成「读+写」之前生成的（那种只能读，得重新生成一遍）";
-        if (code == 403) why = "这个号没有发推权限，或者内容被挡下来了。" + why;
-        if (code == 429) why = "这个月的额度用完了，或者发太快了。" + why;
-        out.put("err", why.length() > 300 ? why.substring(0, 300) : why);
+        out.put("code", r.code);
+        String w = why(r);
+        if (r.code == 401) {
+            w = "401 —— 这四把钥匙 x 那边不认。原话：" + w
+                + "\n先点上面那个「自检一下」，它能分清是钥匙本身不对，还是只是没有发帖权限。";
+            if (Math.abs(r.skew) > 120) w += "\n另外你手机的时间比 x 那边差了 " + r.skew + " 秒，差太多也会一直 401，去把系统时间调成自动。";
+        }
+        if (r.code == 403) w = "403 —— 这个号不让发，或者内容被挡下来了。原话：" + w;
+        if (r.code == 429) w = "429 —— 额度用完了，或者发太快了。原话：" + w;
+        if (r.code == 402 || /* 有的按量计费返回这个 */ r.code == 400) w = r.code + " —— 原话：" + w;
+        out.put("err", w.length() > 400 ? w.substring(0, 400) : w);
+        return out.toString();
+    }
+
+    /** 自检：拿这四把钥匙去问「我是谁」。这个只要读权限，能把问题分成两半 */
+    @JavascriptInterface
+    public String checkNow() {
+        final String id = "chk-" + System.currentTimeMillis();
+        synchronized (results) { results.put(id, ""); }
+        new Thread(new Runnable() {
+            public void run() {
+                String out;
+                try { out = doCheck(); }
+                catch (Exception e) { out = err(String.valueOf(e.getMessage())); }
+                synchronized (results) { results.put(id, out); }
+            }
+        }).start();
+        return id;
+    }
+
+    private String doCheck() throws Exception {
+        if (!ready()) return err("四把钥匙还没填全");
+        Res r = call("api.x.com", "GET", "/2/users/me", null);
+        String host = "api.x.com";
+        if (r.code == 401) {
+            Res r2 = call("api.twitter.com", "GET", "/2/users/me", null);
+            if (r2.code != 401) { r = r2; host = "api.twitter.com"; }
+        }
+        JSONObject out = new JSONObject();
+        out.put("code", r.code);
+        out.put("host", host);
+        out.put("skew", r.skew);
+        if (r.code >= 200 && r.code < 300) {
+            out.put("ok", true);
+            try {
+                JSONObject d = new JSONObject(r.raw).getJSONObject("data");
+                out.put("who", d.optString("username", ""));
+                out.put("name", d.optString("name", ""));
+            } catch (Exception ig) {}
+            return out.toString();
+        }
+        out.put("ok", false);
+        out.put("err", why(r));
         return out.toString();
     }
 
