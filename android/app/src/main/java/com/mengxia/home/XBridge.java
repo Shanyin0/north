@@ -185,9 +185,20 @@ public class XBridge {
                 + "\n先点上面那个「自检一下」，它能分清是钥匙本身不对，还是只是没有发帖权限。";
             if (Math.abs(r.skew) > 120) w += "\n另外你手机的时间比 x 那边差了 " + r.skew + " 秒，差太多也会一直 401，去把系统时间调成自动。";
         }
-        if (r.code == 403) w = "403 —— 这个号不让发，或者内容被挡下来了。原话：" + w;
-        if (r.code == 429) w = "429 —— 额度用完了，或者发太快了。原话：" + w;
-        if (r.code == 402 || /* 有的按量计费返回这个 */ r.code == 400) w = r.code + " —— 原话：" + w;
+        if (r.code == 403) w = "403 —— 这个号不让发，或者内容被挡下来了。原话：" + w
+                + "\n最常见的是 App 权限还停在 Read only。去 developer.x.com 那个 App 的"
+                + " User authentication settings，改成 Read and write，改完必须重新 Regenerate"
+                + " 一次 Access Token（旧的会作废）。";
+        if (r.code == 429) w = "429 —— 发太快了，或者这个月的额度用完了。原话：" + w
+                + "\n去 developer.x.com 首页看 Usage 那一栏，上面写着还剩多少。用完的话只能等下个月一号重置。";
+        if (r.code == 402) w = "402 —— 钥匙是好的，是 x 那边的额度／计费用完了。原话：" + w
+                + "\n\n这一条跟代码没关系，梦匣这边改不了。去 developer.x.com 首页看 Usage："
+                + "\n· 免费档每个月能发的条数很少，用完就得等下个月一号重置"
+                + "\n· 也可能是这个 App 没挂在正确的 Project 下面，或者那个 Project 的档位没配好"
+                + "\n· 「自检一下」也算一次调用，别反复点"
+                + "\n\n等不及的话，用下面那个「复制这条」，去推特 App 里自己贴一下发。";
+        if (r.code == 400) w = "400 —— x 说这条请求它看不懂。原话：" + w
+                + "\n多半是正文有它不收的东西（太长、或者带了什么它不认的字符）。";
         out.put("err", w.length() > 400 ? w.substring(0, 400) : w);
         return out.toString();
     }
