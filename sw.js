@@ -5,6 +5,8 @@ self.addEventListener('activate', e => {
 });
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // 版本号那个小文件每次网址都不一样，缓存它只会越攒越多。直接放过
+  if (e.request.url.indexOf('build.txt') >= 0) return;
   const isPage = e.request.mode === 'navigate' || (e.request.destination === 'document');
   if (isPage) {
     // 页面本体：先联网拿最新的，拿不到再用缓存（这样更新一次就能看到）
