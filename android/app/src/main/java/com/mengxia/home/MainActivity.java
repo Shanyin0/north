@@ -247,13 +247,13 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new Object() {
             @android.webkit.JavascriptInterface
             public void fresh() {
-                PageCache.drop(MainActivity.this);
-                web.post(new Runnable() {
-                    public void run() {
-                        try { web.clearCache(true); } catch (Exception ignored) {}
-                        try { web.loadUrl(siteUrl()); } catch (Exception ignored) {}
-                    }
-                });
+                // 以前这儿是「删掉存的那份 + 整个 WebView 重新加载」。那是错的：
+                // 一重新加载又走拦截，下载的那份刚被删了，于是退到装 APK 时
+                // 一起装进来的 assets/page.html —— 比原来还旧。她点一次退一次。
+                //
+                // 现在只做一件事：后台去拉一份新的存起来。当前这一屏不动
+                // （网页那边自己会把新页面换上去），下次开机手边就是新的了。
+                PageCache.refreshLater(MainActivity.this, siteUrl());
             }
 
             /**

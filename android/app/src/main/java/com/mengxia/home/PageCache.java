@@ -88,8 +88,12 @@ public class PageCache {
         HttpURLConnection con = null;
         try {
             con = (HttpURLConnection) new URL(site).openConnection();
-            con.setConnectTimeout(6000);
-            con.setReadTimeout(25000);
+            con.setConnectTimeout(10000);
+            // 整页八兆。二十五秒读超时是我拍脑袋定的 —— 那要求一路
+            // 三百多 KB/s 不断，挂着梯子走流量根本达不到，于是这一趟
+            // 每次都在半路超时，存货就永远换不了新。她说"重开也没更新"
+            // 最根上的原因在这儿。这是后台线程，没人等它，给足时间
+            con.setReadTimeout(180000);
             con.setInstanceFollowRedirects(true);
             con.setUseCaches(false);
             con.setRequestProperty("Accept", "text/html");
