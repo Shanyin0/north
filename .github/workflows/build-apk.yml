@@ -75,7 +75,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete apk --yes --cleanup-tag || true
-          gh release create apk out/*.apk \
+          # 每一版都单独留一个 release，永远不删 —— 以前这儿是
+          # 「gh release delete apk」，等于每打一版就把上一版抹掉，
+          # 她想装回某个旧版本的时候什么都找不到。别再这么干。
+          STAMP=$(cat build.txt 2>/dev/null || echo "")
+          gh release create "v$VER" out/*.apk \
             --title "梦匣 App · $VER" \
-            --notes "手机上点下面的 .apk 就能装。装过一次之后，以后更新前端不用重装，重开 App 就是新的。"
+            --notes "这一版的安装包，永远留着，随时装得回来。内置页面 $STAMP。手机上的聊天、日记、照片都在各自的地方存着，换版本不动它们。" \
+            || echo "v$VER 已经有了，跳过"
+
+          # 另外维持一个固定的 apk 标签，永远指向最新那一版 —— 她习惯从这里下。
+          # 只换里面的文件，不删 release
+          if gh release view apk >/dev/null 2>&1; then
+            gh release upload apk out/*.apk --clobber
+            gh release edit apk --title "梦匣 App · $VER（最新）"
+          else
+            gh release create apk out/*.apk \
+              --title "梦匣 App · $VER（最新）" \
+              --notes "这里永远是最新的一版。想装回旧版本，去 Releases 里翻 v1.x.x。"
+          fi
