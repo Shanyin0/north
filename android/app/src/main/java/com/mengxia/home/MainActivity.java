@@ -243,6 +243,8 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new SaveBridge(this), "MengxiaNative");
         web.addJavascriptInterface(new UsageBridge(this), "MengxiaUsage");
         web.addJavascriptInterface(new XBridge(this), "MengxiaX");
+        // 聊天记录被盖掉之后，去 LevelDB 的旧文件里按字节捞。只读 App 自己的目录
+        web.addJavascriptInterface(new DigBridge(this), "MengxiaDig");
         // 她自己想强行去拿一份最新的页面时用：把存的那份丢掉，再从网上下一次
         web.addJavascriptInterface(new Object() {
             @android.webkit.JavascriptInterface
