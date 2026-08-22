@@ -395,35 +395,15 @@ public class Pusher {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try { b.setBadgeIconType(Notification.BADGE_ICON_NONE); } catch (Exception ignored) {}
             }
-            boolean asChat = false;
-
-            // 安卓 9 以上：走"对话通知"——最前面那一格是他的头像，右边不再挂第二张图。
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                try {
-                    Icon face = (av != null) ? Icon.createWithBitmap(av) : null;
-                    Person.Builder pb = new Person.Builder().setKey("sir").setName(title).setImportant(true);
-                    if (face != null) pb.setIcon(face);
-                    Person sir = pb.build();
-                    Person her = new Person.Builder().setKey("me").setName("我").build();
-
-                    Notification.MessagingStyle st = new Notification.MessagingStyle(her);
-                    st.addMessage(new Notification.MessagingStyle.Message(
-                            text, System.currentTimeMillis(), sir));
-                    b.setStyle(st);
-                    b.addPerson(sir);
-                    // 只有快捷方式登记成功，系统才会按对话通知排版（头像在最前）
-                    if (pushConversation(ctx, title, face, sir)) {
-                        b.setShortcutId(SHORTCUT_ID);
-                        asChat = true;
-                    }
-                } catch (Exception ignored) {}
-            }
-
-            // 排不上对话样式就退回去：至少把头像挂上，别只剩一个软件图标。
-            if (!asChat) {
-                b.setStyle(new Notification.BigTextStyle().bigText(text));
-                if (av != null) b.setLargeIcon(av);
-            }
+            // 只用普通通知 + 大头像。
+            //
+            // 以前这儿走的是「对话通知」（MessagingStyle + 快捷方式）。那种排版好看，
+            // 可系统会强制在头像右下角盖一个软件图标当角标 —— 就是她圈出来那个开屏图案。
+            // 那个角标不是 smallIcon 画的，所以把 smallIcon 换成透明的根本没用。
+            // 普通通知没这回事：左边就是 setLargeIcon 给的他的脸，
+            // 右下角那个小的才是 smallIcon（我们给的全透明），于是什么都不盖。
+            b.setStyle(new Notification.BigTextStyle().bigText(text));
+            if (av != null) b.setLargeIcon(av);
 
             notiSeq = (notiSeq + 1) % 20;
             nm.notify(NOTI_ID + notiSeq, b.build());
