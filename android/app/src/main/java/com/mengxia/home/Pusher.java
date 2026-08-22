@@ -38,7 +38,9 @@ import java.util.Random;
 public class Pusher {
 
     static final String PREF = "mengxia_push";
-    static final String CH_ID = "mengxia_him";
+    // 频道一旦建好，setShowBadge 之类的就改不动了 —— 想改只能换个新 id。
+    // 这里从 mengxia_him 换成 mengxia_him2，为的是把桌面角标关掉
+    static final String CH_ID = "mengxia_him2";
     static final int NOTI_ID = 8801;
     private static int notiSeq = 0;
     static final String SHORTCUT_ID = "mengxia_sir";
@@ -367,7 +369,9 @@ public class Pusher {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 NotificationChannel ch = new NotificationChannel(CH_ID, "他来找你", NotificationManager.IMPORTANCE_HIGH);
                 ch.setDescription("他自己浮上来说话的时候");
+                ch.setShowBadge(false);                 // 桌面图标上不要那个小红点
                 nm.createNotificationChannel(ch);
+                try { nm.deleteNotificationChannel("mengxia_him"); } catch (Exception ignored) {}
             }
             Intent open = new Intent(ctx, MainActivity.class);
             open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -378,13 +382,19 @@ public class Pusher {
             Notification.Builder b;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b = new Notification.Builder(ctx, CH_ID);
             else b = new Notification.Builder(ctx);
-            b.setSmallIcon(R.drawable.ic_noti)
+            Bitmap av = avatar(ctx);
+
+            // 左边那一格要的是先生的头像。系统会在头像角上再盖一个 smallIcon ——
+            // 就是她说的"角标"。有他的脸就把 smallIcon 换成全透明的，别盖在他脸上；
+            // 实在没有头像才退回那颗小心心，不然通知连个图标都没有
+            b.setSmallIcon(av != null ? R.drawable.ic_noti_blank : R.drawable.ic_noti)
                     .setContentTitle(title)
                     .setContentText(text)
                     .setAutoCancel(true)
                     .setContentIntent(pi);
-
-            Bitmap av = avatar(ctx);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try { b.setBadgeIconType(Notification.BADGE_ICON_NONE); } catch (Exception ignored) {}
+            }
             boolean asChat = false;
 
             // 安卓 9 以上：走"对话通知"——最前面那一格是他的头像，右边不再挂第二张图。

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 空的。
+     通知左边是先生的头像，系统会在头像角上再盖一个小图标（就是"角标"）。
+     那个小图标就是这里的 smallIcon —— 换成全透明的，他脸上就干净了。
+     代价是状态栏顶上不再有那个小心心，通知本身照常来。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,0 L24,0 L24,24 L0,24 Z" />
+</vector>
