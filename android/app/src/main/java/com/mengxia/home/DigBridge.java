@@ -144,6 +144,21 @@ public class DigBridge {
     /** 一个文件，按字节扫两遍：UTF-16LE 一遍，UTF-8 一遍 */
     private List<String> eat(File f) {
         List<String> out = new ArrayList<String>();
+
+        // .ldb 是压缩过的 —— 不先解开，按字节扫只能看到一团噪声。
+        // 她那几天的聊天早就从 .log 落进 .ldb 了，前几次挖只捞到零星几句
+        // 就是因为这一大半从来没被打开过
+        try {
+            String nm = f.getName().toLowerCase();
+            if (nm.endsWith(".ldb") || nm.endsWith(".sst")) {
+                for (byte[] b : Sst.blocks(f)) {
+                    utf16(b, b.length, out);
+                    utf8(b, b.length, out);
+                    if (out.size() > 60000) return out;
+                }
+            }
+        } catch (Throwable t) { /* 拆不动就按原样扫 */ }
+
         InputStream in = null;
         try {
             in = new FileInputStream(f);
