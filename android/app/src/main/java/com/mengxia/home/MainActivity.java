@@ -94,6 +94,8 @@ public class MainActivity extends Activity {
         // App 一跑起来就会写东西（光存一份新页面就是八兆），那种写入最容易触发
         // LevelDB 合并，一合并旧聊天记录的字节就真没了。只做一次
         try { Snapshot.once(this); } catch (Throwable ignored) {}
+        // 换了新 APK 就把下载存的旧页面丢掉，不然装了新版还是开出旧页面
+        try { PageCache.dropIfUpgraded(this); } catch (Throwable ignored) {}
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#F6F0E4"));

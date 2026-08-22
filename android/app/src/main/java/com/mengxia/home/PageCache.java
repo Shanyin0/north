@@ -47,6 +47,35 @@ public class PageCache {
 
     static File file(Context ctx) { return new File(ctx.getFilesDir(), FILE); }
 
+    /**
+     * 换了新 APK 就把下载存的那份丢掉。
+     *
+     * open() 永远先用下载过的那一份。可她手机上存着的可能比新 APK 里带的还旧 ——
+     * 那样装了新版也白装，开出来还是旧页面，新加的东西一样都看不见。
+     * 所以：APK 里带的版本号一变，就把存货清掉，让这一次用 APK 自带的那份。
+     * 清掉的只是页面代码，她的数据一个字都不动。
+     */
+    static void dropIfUpgraded(Context ctx) {
+        try {
+            String now = "";
+            java.io.InputStream in = ctx.getAssets().open("build.txt");
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[256];
+            int n;
+            while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            in.close();
+            now = bo.toString("UTF-8").trim();
+            if (now.length() == 0) return;
+            android.content.SharedPreferences p =
+                    ctx.getSharedPreferences("mengxia_apk", Context.MODE_PRIVATE);
+            String was = p.getString("bundled", "");
+            if (now.equals(was)) return;                 // 还是上一次那个 APK
+            File f = file(ctx);
+            if (f.exists()) f.delete();
+            p.edit().putString("bundled", now).apply();
+        } catch (Throwable ignored) {}
+    }
+
     static boolean has(Context ctx) {
         File f = file(ctx);
         return f.exists() && f.length() > MIN_OK;
