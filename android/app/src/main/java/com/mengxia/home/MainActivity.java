@@ -90,6 +90,11 @@ public class MainActivity extends Activity {
                     | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
 
+        // 在 WebView 起来之前先把现场封存一份。
+        // App 一跑起来就会写东西（光存一份新页面就是八兆），那种写入最容易触发
+        // LevelDB 合并，一合并旧聊天记录的字节就真没了。只做一次
+        try { Snapshot.once(this); } catch (Throwable ignored) {}
+
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.parseColor("#F6F0E4"));
         root.setLayoutParams(new ViewGroup.LayoutParams(

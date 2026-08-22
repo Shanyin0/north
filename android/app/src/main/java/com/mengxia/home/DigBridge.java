@@ -32,6 +32,7 @@ public class DigBridge {
     private int fileN = 0;
     private long byteN = 0;
     private int strN = 0;
+    private int snapN = 0;      // 其中有几个是封存下来的旧现场
 
     private static final int CHUNK = 96 * 1024;     // 一块多大
     private static final long MAX_TOTAL = 24L * 1024 * 1024;  // 最多捞这么多字，别把内存撑爆
@@ -61,7 +62,7 @@ public class DigBridge {
     @JavascriptInterface
     public String scan() {
         chunks = new ArrayList<String>();
-        fileN = 0; byteN = 0; strN = 0;
+        fileN = 0; byteN = 0; strN = 0; snapN = 0;
         StringBuilder bag = new StringBuilder(CHUNK + 4096);
         Set<String> seen = new HashSet<String>();
         long total = 0;
@@ -72,13 +73,14 @@ public class DigBridge {
                 if (total > MAX_TOTAL) break;
                 // 只挖存东西的地方，别去啃 so 库和图片缓存
                 String p = rel(f).toLowerCase();
+                // 得是存东西的地方。光看 .log 结尾太松 —— 缓存目录里也全是 .log
                 boolean worth = p.contains("leveldb") || p.contains("indexeddb")
                         || p.contains("local storage") || p.contains("session storage")
-                        || p.endsWith(".log") || p.endsWith(".ldb") || p.endsWith(".sst")
-                        || p.endsWith(".db") || p.endsWith(".json") || p.endsWith(".txt");
+                        || p.contains("databases") || p.contains(Snapshot.DIR);
                 if (!worth) continue;
                 fileN++;
                 byteN += f.length();
+                if (p.startsWith("/" + Snapshot.DIR) || p.startsWith(Snapshot.DIR)) snapN++;
                 List<String> got = eat(f);
                 for (String s : got) {
                     if (total > MAX_TOTAL) break;
@@ -93,7 +95,8 @@ public class DigBridge {
         } catch (Throwable t) { /* 挖到哪儿算哪儿 */ }
         if (bag.length() > 0) chunks.add(bag.toString());
         return "{\"files\":" + fileN + ",\"bytes\":" + byteN
-             + ",\"strings\":" + strN + ",\"chunks\":" + chunks.size() + "}";
+             + ",\"strings\":" + strN + ",\"snap\":" + snapN
+             + ",\"chunks\":" + chunks.size() + "}";
     }
 
     @JavascriptInterface
@@ -190,22 +193,27 @@ public class DigBridge {
         return false;
     }
 
-    /** Chrome 的 localStorage 值就是这么存的：UTF-16 小端，一个字两字节 */
+    /**
+     * Chrome 的 localStorage 值就是这么存的：UTF-16 小端，一个字两字节。
+     *
+     * 要紧的是「从第几个字节开始数」：一条记录前面的头长几个字节是不定的，
+     * 只从偶数位数的话，落在奇数位上的那些记录会被拆成乱码，整段丢掉。
+     * 我一开始就是只数偶数位，一百五十句只捞回八十二句。
+     * 所以两个起点各扫一遍 —— 重复的后面会去掉。
+     */
     private void utf16(byte[] b, int len, List<String> out) {
+        utf16From(b, len, 0, out);
+        utf16From(b, len, 1, out);
+    }
+
+    private void utf16From(byte[] b, int len, int start, List<String> out) {
         StringBuilder run = new StringBuilder();
-        for (int i = 0; i + 1 < len; i += 2) {
+        for (int i = start; i + 1 < len; i += 2) {
             int c = (b[i] & 0xFF) | ((b[i + 1] & 0xFF) << 8);
             if (texty(c)) {
                 run.append((char) c);
-                if (run.length() > 20000) { keep(run, out); }
-            } else {
-                keep(run, out);
-                // 错开一个字节再试一次 —— 串可能不是从偶数位开始的
-                if (run.length() == 0 && i + 2 < len) {
-                    int d = (b[i + 1] & 0xFF) | ((b[i + 2] & 0xFF) << 8);
-                    if (texty(d) && (d >= 0x4E00 && d <= 0x9FFF)) { i++; }
-                }
-            }
+                if (run.length() > 20000) keep(run, out);
+            } else keep(run, out);
         }
         keep(run, out);
     }
