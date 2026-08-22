@@ -76,7 +76,18 @@ public class DigBridge {
                 // 得是存东西的地方。光看 .log 结尾太松 —— 缓存目录里也全是 .log
                 boolean worth = p.contains("leveldb") || p.contains("indexeddb")
                         || p.contains("local storage") || p.contains("session storage")
-                        || p.contains("databases") || p.contains(Snapshot.DIR);
+                        || p.contains("databases") || p.contains(Snapshot.DIR)
+                        // 她问「本地缓存里有没有」。这两块我原先写死跳过了 ——
+                        // 机会不大（推送那份只存最近十二条、还每五分钟覆盖一次；
+                        // 聊天是 POST 发出去的，回复不进网页缓存），但这是最后
+                        // 两个没翻过的角落，翻一遍才好回答她「有」还是「没有」
+                        || p.contains("shared_prefs") || p.contains("/cache")
+                        || p.contains("code_cache") || p.contains("http cache");
+                // .so、字体、图片这些别啃
+                if (worth && (p.endsWith(".so") || p.endsWith(".png") || p.endsWith(".jpg")
+                        || p.endsWith(".webp") || p.endsWith(".ttf") || p.endsWith(".woff2")
+                        || p.endsWith(".dex") || p.endsWith(".odex") || p.endsWith(".vdex")
+                        || p.endsWith(".art"))) worth = false;
                 if (!worth) continue;
                 fileN++;
                 byteN += f.length();
