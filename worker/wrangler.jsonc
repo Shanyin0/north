@@ -8,14 +8,28 @@
   // 整份备份存这儿。id 换成你自己那个 KV 的 ID
   "kv_namespaces": [
     { "binding": "BK", "id": "e01a4fe9c1e8449dbf3733e3960f290c" }
-  ],
-
-  // 聊天流水账存这儿。建完 D1 之后把 database_id 换成你自己那个。
-  // 建表语句在 worker/README.md 里，要先在 D1 的 Console 执行一次。
-  // 也可以不写这一段，改在网页上 Settings → Bindings 里加，绑定名一样是 DB
-  "d1_databases": [
-    { "binding": "DB", "database_name": "mengxia", "database_id": "在这儿填你自己那个" }
   ]
+
+  // ---- 聊天流水账要用的 D1，还没接上 ----
+  //
+  // 这儿本来写了一段 d1_databases，但 database_id 我填的是一句占位的中文，
+  // 不是真 ID。这个 Worker 接着 Git 自动部署，一推上来 wrangler deploy
+  // 验不过，整个构建当场失败 —— 她那边看到的「Your last build failed」
+  // 就是这么来的。是我的错，先撤掉，让部署先恢复正常。
+  //
+  // 要接上的话，把下面这段的注释去掉、ID 换成真的，再推一次：
+  //   Cloudflare → Storage & Databases → D1 → 点进那个库 → Database ID
+  //   （一串 36 位带横杠的）
+  //
+  //   , "d1_databases": [
+  //       { "binding": "DB", "database_name": "mengxia", "database_id": "真 ID 贴这儿" }
+  //     ]
+  //
+  // 注意上面那个逗号：kv_namespaces 那一段后面得有逗号才能再接一段。
+  //
+  // 还要注意：这个 Worker 从 Git 部署，bindings 以这个文件为准。
+  // 在网页上 Settings → Bindings 里手动加的 D1，下一次 Git 部署会被冲掉 ——
+  // 所以别在网页上加，要加就加在这个文件里。
 
   // 三个都在网页上填，而且都要勾 Secret：
   //   Worker → Settings → Variables and Secrets（不是 Build 那一节）
