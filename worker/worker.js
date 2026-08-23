@@ -220,9 +220,18 @@ export default {
 
       // 有几条、最早最晚是什么时候
       if (what === 'stat') {
+        // 有些消息没有真正的时间戳（从碎片里拼回来的那批），ts 是 0 或者一个小数字。
+        // 算日期范围的时候要把它们排除，不然「从 1970年1月1日 开始」——
+        // 那不是真的，只是没时间戳。但条数照算，一条都不少。
+        const OK = 1000000000000;      // 2001-09-09，比这小的都不是真时间戳
         const r = await env.DB.prepare(
-          'SELECT COUNT(*) n, MIN(ts) lo, MAX(ts) hi, MAX(sid) top FROM msgs').first();
-        return json({ n: (r && r.n) || 0, from: (r && r.lo) || 0, to: (r && r.hi) || 0, top: (r && r.top) || 0 });
+          'SELECT COUNT(*) n, MAX(sid) top,'
+          + ' MIN(CASE WHEN ts >= ? THEN ts END) lo,'
+          + ' MAX(CASE WHEN ts >= ? THEN ts END) hi,'
+          + ' SUM(CASE WHEN ts IS NULL OR ts < ? THEN 1 ELSE 0 END) noTs'
+          + ' FROM msgs').bind(OK, OK, OK).first();
+        return json({ n: (r && r.n) || 0, from: (r && r.lo) || 0, to: (r && r.hi) || 0,
+                      top: (r && r.top) || 0, noTs: (r && r.noTs) || 0 });
       }
 
       // 往上追加。body: { msgs: [ {cid, mid, role, text, ts, extra} ... ] }
