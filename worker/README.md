@@ -88,8 +88,8 @@ Worker 页面 → **Settings** → **Bindings** → **Add** → **KV namespace**
 
 ### 建库（只做一次）
 
-1. Cloudflare → **Storage & Databases → D1 → Create**，名字随便起
-2. 进去点 **Console**，把下面这段贴进去执行：
+1. Cloudflare → **Storage & Databases → D1 → Create**，名字随便起（我们这个叫 `north`）
+2. 进去点 **Console**（Console 是建完库、点进那个库里面才有的），把下面这段贴进去执行：
 
 ```sql
 CREATE TABLE IF NOT EXISTS msgs (
@@ -106,9 +106,11 @@ CREATE TABLE IF NOT EXISTS msgs (
 CREATE INDEX IF NOT EXISTS ix_msgs_cid_ts ON msgs (cid, ts);
 ```
 
-3. 回到 Worker → **Settings → Bindings → Add → D1 database**，
-   变量名一定要写 **`DB`**，选刚建的那个库
-4. 部署一次。访问 `/ping`，看到 `"D1": true` 就成了
+3. **不要在网页上加绑定。** 这个 Worker 从 Git 部署，bindings 以
+   `wrangler.jsonc` 为准，网页上手动加的下一次部署会被冲掉。
+   在 D1 那个库右边的 `...` → **Copy binding**，把复制到的
+   `database_name` 和 `database_id` 填进 `wrangler.jsonc` 的 `d1_databases`
+4. 推一次代码，Cloudflare 自动部署。访问 `/ping`，看到 `"D1": true` 就成了
 
 ### 手机上
 
