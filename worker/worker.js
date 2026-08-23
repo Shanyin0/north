@@ -4,7 +4,10 @@
  * 它干三件事：
  *   1. /v1/chat/completions —— 中转。手机把话发到这儿，这儿再拿真 key 去找模型。
  *      key 只存在 Worker 的机密里，手机上一份都没有。
- *   2. /backup            —— 备份。PUT 存一份，GET 取回来。
+ *   2. /backup            —— 整份备份。PUT 存一份（留 30 个版本，谁也盖不掉谁），
+ *                          GET 取回来，/backup/list 看云上有哪几份。
+ *   2.5 /chat/*           —— 聊天流水账。只追加，不改不删，重复自动认出来。
+ *                          put 追加 / since 往回捞 / stat 看有几条 / dump 整段倒出来。
  *   3. /tool/*            —— 小工具。掷骰子、抽牌、真随机，先生要用的时候调。
  *
  * 需要在 Cloudflare 里配：
@@ -14,6 +17,8 @@
  *     UPSTREAM_KEY模型站的 key
  *   KV（Storage → KV → 建一个，然后 Bindings 里绑上）
  *     变量名写 BK
+ *   D1（Storage → D1 → 建一个，然后 Bindings 里绑上）
+ *     变量名写 DB。建完要执行一次建表语句，见 worker/README.md
  */
 
 const CORS = {
@@ -93,9 +98,10 @@ export default {
         UPSTREAM: !!env.UPSTREAM,
         UPSTREAM_KEY: !!env.UPSTREAM_KEY,
         KV: !!env.BK,
+        D1: !!env.DB,
         看得见的名字: names,
         上游: upHost,
-        这份代码: '2026-08-16 d'
+        这份代码: '2026-08-23 e（备份留版本 + 聊天流水账）'
       });
     }
 
@@ -129,29 +135,150 @@ export default {
     }
 
     // ---------- 2. 备份 ----------
-    if (path === '/backup') {
+    // 以前这儿是「整份覆盖」：每次传上来直接盖掉 latest，另外按星期几留一份
+    // 七天过期。云上最多八份，实际只有一周的历史；同一个星期几传两次，
+    // 前一次当场没。传上去一份坏的，好的那份也就跟着没了。
+    //
+    // 现在改成留版本：每一份都带自己的时间戳单独存着，谁也盖不掉谁。
+    // latest 只是个指针，指向最近那一份。
+    const KEEP = 30;                        // 留最近 30 份
+    const KEEP_MIN = 3;                     // 无论如何不动最近这 3 份
+
+    if (path === '/backup' || path === '/backup/list') {
       if (!pass(req, env)) return text(whyNo(req, env), 401);
       if (!env.BK) return text('Worker 还没绑 KV（变量名要写 BK）', 500);
+
+      // 云上现在有哪几份
+      if (path === '/backup/list') {
+        const ls = await env.BK.list({ prefix: 'bk:' });
+        const rows = ls.keys.map(k => Object.assign(
+          { id: k.name.slice(3) }, k.metadata || {}
+        )).sort((a, b) => String(b.id).localeCompare(String(a.id)));
+        let cur = null;
+        try { cur = JSON.parse(await env.BK.get('latest_id') || 'null'); } catch (e) {}
+        return json({ n: rows.length, latest: cur, list: rows });
+      }
 
       if (req.method === 'PUT' || req.method === 'POST') {
         const body = await req.text();
         if (body.length > 24 * 1024 * 1024) return text('这一份太大了，超过 24MB', 413);
-        // 存两份：latest 是最新的，dayN 留一份七天内的旧的，免得刚好传上去一份坏的
-        const day = 'd' + (new Date().getUTCDay());
-        await env.BK.put('latest', body);
-        await env.BK.put(day, body, { expirationTtl: 7 * 86400 });
-        return json({ ok: true, size: body.length });
+        // 空的、或者一看就不是 JSON 的，不收 —— 免得一个坏请求挤掉一份好的
+        if (body.length < 2 || !/^[\s]*[\{\[]/.test(body)) return text('这不像一份备份', 400);
+
+        const now = new Date();
+        const id = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);   // 20260823T0341 → 20260823034100
+        const meta = { at: now.toISOString(), size: body.length };
+
+        // 先把新的写进去，写成了才谈清理旧的。
+        // 反过来的话，万一清完写失败，就是既没新的也没旧的
+        await env.BK.put('bk:' + id, body, { metadata: meta });
+        await env.BK.put('latest', body);                    // 老的取法还能用，不破坏旧版本 app
+        await env.BK.put('latest_id', JSON.stringify(Object.assign({ id: id }, meta)));
+
+        // 清理：只清超出 KEEP 的那些，而且永远保住最近 KEEP_MIN 份
+        let pruned = 0;
+        try {
+          const ls = await env.BK.list({ prefix: 'bk:' });
+          const names = ls.keys.map(k => k.name).sort();     // 时间戳字典序＝时间序
+          const over = names.length - KEEP;
+          if (over > 0) {
+            const kill = names.slice(0, Math.min(over, Math.max(0, names.length - KEEP_MIN)));
+            for (const nm of kill) { await env.BK.delete(nm); pruned++; }
+          }
+        } catch (e) { /* 清不掉就算了，多留几份不是坏事 */ }
+
+        return json({ ok: true, id: id, size: body.length, pruned: pruned });
       }
 
       if (req.method === 'GET') {
         const which = url.searchParams.get('which') || 'latest';
-        const v = await env.BK.get(which);
-        if (v === null) return text('还没存过', 404);
+        // which=latest 拿最近那份；which=<id> 拿指定那一份；老的 d0..d6 也还认
+        const key = (which === 'latest' || /^d[0-6]$/.test(which)) ? which : ('bk:' + which);
+        const v = await env.BK.get(key);
+        if (v === null) return text('没有这一份', 404);
         return new Response(v, {
           headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, CORS)
         });
       }
       return text('只认 GET 和 PUT', 405);
+    }
+
+    // ---------- 2.5 聊天流水账 ----------
+    // 整份备份治不了「一条一条慢慢丢」。这儿是另一条路：每说一句就往上追加一条。
+    //
+    // 三条铁律，写死在这儿，往后改也不许破：
+    //   一、只追加。没有 UPDATE，没有 DELETE，一个都没有。
+    //   二、认重复。同一条消息传一百遍也只有一行（cid+mid 唯一）。
+    //       手机断网重试、换手机重传，都不会翻倍。
+    //   三、手机是主，这儿是镜像。这儿挂了、满了、口令错了，手机上照样聊。
+    //
+    // 要在 Cloudflare 里建一个 D1，绑定名写 DB。建表语句在 worker/README.md 里。
+    if (path.startsWith('/chat/')) {
+      if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
+      if (!env.DB) return json({ error: 'Worker 还没绑 D1（绑定名要写 DB）。建表语句看 worker/README.md' }, 500);
+      const what = path.slice('/chat/'.length);
+
+      // 有几条、最早最晚是什么时候
+      if (what === 'stat') {
+        const r = await env.DB.prepare(
+          'SELECT COUNT(*) n, MIN(ts) lo, MAX(ts) hi, MAX(sid) top FROM msgs').first();
+        return json({ n: (r && r.n) || 0, from: (r && r.lo) || 0, to: (r && r.hi) || 0, top: (r && r.top) || 0 });
+      }
+
+      // 往上追加。body: { msgs: [ {cid, mid, role, text, ts, extra} ... ] }
+      if (what === 'put' && (req.method === 'POST' || req.method === 'PUT')) {
+        let body;
+        try { body = await req.json(); } catch (e) { return json({ error: '不是 JSON' }, 400); }
+        const list = (body && body.msgs) || [];
+        if (!Array.isArray(list)) return json({ error: 'msgs 要是个数组' }, 400);
+        if (list.length > 500) return json({ error: '一次最多 500 条' }, 413);
+
+        const st = env.DB.prepare(
+          'INSERT OR IGNORE INTO msgs (cid, mid, role, text, ts, extra, got_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        const now = Date.now();
+        const rows = [];
+        for (const m of list) {
+          if (!m || typeof m !== 'object') continue;
+          const cid = String(m.cid == null ? '' : m.cid).slice(0, 64);
+          const mid = String(m.mid == null ? '' : m.mid).slice(0, 64);
+          if (!cid || !mid) continue;                       // 没身份的不收，不然认不出重复
+          rows.push(st.bind(
+            cid, mid,
+            String(m.role || '').slice(0, 16),
+            String(m.text == null ? '' : m.text).slice(0, 200000),
+            Number(m.ts) || now,
+            m.extra == null ? null : String(typeof m.extra === 'string' ? m.extra : JSON.stringify(m.extra)).slice(0, 200000),
+            now));
+        }
+        if (!rows.length) return json({ ok: true, got: 0, note: '这一批里没有能收的' });
+        await env.DB.batch(rows);
+        const r = await env.DB.prepare('SELECT COUNT(*) n, MAX(sid) top FROM msgs').first();
+        return json({ ok: true, got: rows.length, total: (r && r.n) || 0, top: (r && r.top) || 0 });
+      }
+
+      // 往回捞。?after=<sid>&limit=  按入库顺序，一页一页拿
+      if (what === 'since' && req.method === 'GET') {
+        const after = parseInt(url.searchParams.get('after') || '0', 10) || 0;
+        const lim = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 1), 500);
+        const r = await env.DB.prepare(
+          'SELECT sid, cid, mid, role, text, ts, extra FROM msgs WHERE sid > ? ORDER BY sid LIMIT ?')
+          .bind(after, lim).all();
+        const rows = (r && r.results) || [];
+        return json({ n: rows.length, next: rows.length ? rows[rows.length - 1].sid : after, rows: rows });
+      }
+
+      // 整段倒出来。?cid= 只要某一段，不给就全部
+      if (what === 'dump' && req.method === 'GET') {
+        const cid = url.searchParams.get('cid') || '';
+        const q = cid
+          ? env.DB.prepare('SELECT sid, cid, mid, role, text, ts, extra FROM msgs WHERE cid = ? ORDER BY ts, sid').bind(cid)
+          : env.DB.prepare('SELECT sid, cid, mid, role, text, ts, extra FROM msgs ORDER BY ts, sid');
+        const r = await q.all();
+        return json({ app: 'mengxia', kind: 'chatlog', v: 1, at: Date.now(),
+                      rows: (r && r.results) || [] });
+      }
+
+      return json({ error: '没有这个地址。有的是 /chat/put /chat/since /chat/stat /chat/dump' }, 404);
     }
 
     // ---------- 3. 转一手 ----------

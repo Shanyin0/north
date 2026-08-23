@@ -5,9 +5,16 @@
   "compatibility_date": "2026-08-01",
   "observability": { "enabled": true },
 
-  // 备份存这儿。id 换成你自己那个 KV 的 ID
+  // 整份备份存这儿。id 换成你自己那个 KV 的 ID
   "kv_namespaces": [
     { "binding": "BK", "id": "e01a4fe9c1e8449dbf3733e3960f290c" }
+  ],
+
+  // 聊天流水账存这儿。建完 D1 之后把 database_id 换成你自己那个。
+  // 建表语句在 worker/README.md 里，要先在 D1 的 Console 执行一次。
+  // 也可以不写这一段，改在网页上 Settings → Bindings 里加，绑定名一样是 DB
+  "d1_databases": [
+    { "binding": "DB", "database_name": "mengxia", "database_id": "在这儿填你自己那个" }
   ]
 
   // 三个都在网页上填，而且都要勾 Secret：
