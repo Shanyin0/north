@@ -395,15 +395,46 @@ public class Pusher {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try { b.setBadgeIconType(Notification.BADGE_ICON_NONE); } catch (Exception ignored) {}
             }
-            // 只用普通通知 + 大头像。
+            // 对话通知：他的头像在最前面，后面才是话 —— 她要的就是这个排版。
             //
-            // 以前这儿走的是「对话通知」（MessagingStyle + 快捷方式）。那种排版好看，
-            // 可系统会强制在头像右下角盖一个软件图标当角标 —— 就是她圈出来那个开屏图案。
-            // 那个角标不是 smallIcon 画的，所以把 smallIcon 换成透明的根本没用。
-            // 普通通知没这回事：左边就是 setLargeIcon 给的他的脸，
-            // 右下角那个小的才是 smallIcon（我们给的全透明），于是什么都不盖。
-            b.setStyle(new Notification.BigTextStyle().bigText(text));
-            if (av != null) b.setLargeIcon(av);
+            // 来回过两轮了，把两边的账记在这儿，别再来第三轮：
+            //   普通通知  头像挂在右边，脸上干净
+            //   对话通知  头像在左边（她要的），但系统会在头像右下角盖一个小角标
+            // 她看过两种，选了对话通知。角标的大小和透明度没有任何接口能调 ——
+            // 那一格是系统画的，app 只能决定「画什么」，决定不了「画多大、多淡」。
+            // 我们能做的就是把 smallIcon 换成全透明的（上面那行）：
+            // 系统真按 smallIcon 画的话，那儿就是空的；
+            // 要是它按软件图标画（有的定制系统这么干），那就只能换软件图标了。
+            boolean asChat = false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    Icon face = (av != null) ? Icon.createWithBitmap(av) : null;
+                    Person.Builder pb = new Person.Builder().setKey("sir").setName(title).setImportant(true);
+                    if (face != null) pb.setIcon(face);
+                    Person sir = pb.build();
+                    Person her = new Person.Builder().setKey("me").setName("我").build();
+
+                    // 一条通知里只放这一句 —— 她要的是「一句就是一条」，
+                    // 不是把几句攒在一条里
+                    Notification.MessagingStyle st = new Notification.MessagingStyle(her);
+                    st.addMessage(new Notification.MessagingStyle.Message(
+                            text, System.currentTimeMillis(), sir));
+                    b.setStyle(st);
+                    b.addPerson(sir);
+                    // 快捷方式登记成功，系统才肯按对话通知排版（头像在最前）
+                    if (pushConversation(ctx, title, face, sir)) {
+                        b.setShortcutId(SHORTCUT_ID);
+                        asChat = true;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // 排不上对话样式（安卓太老、或者快捷方式没登记上）就退回普通通知：
+            // 至少把他的脸挂上，别只剩一个软件图标
+            if (!asChat) {
+                b.setStyle(new Notification.BigTextStyle().bigText(text));
+                if (av != null) b.setLargeIcon(av);
+            }
 
             notiSeq = (notiSeq + 1) % 20;
             nm.notify(NOTI_ID + notiSeq, b.build());
