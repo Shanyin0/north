@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 空的。
-     通知左边是先生的头像，系统会在头像角上再盖一个小图标（就是"角标"）。
-     那个小图标就是这里的 smallIcon —— 换成全透明的，他脸上就干净了。
-     代价是状态栏顶上不再有那个小心心，通知本身照常来。 -->
+<!-- 极小的一个单色点。
+     通知左边是先生的头像，系统会在头像角上再盖一个小图标（就是"角标"），
+     那个小图标就是 smallIcon。
+
+     以前这里是全透明的，想让他脸上干净 —— 但有的系统把全透明当成无效图标，
+     转头拿软件图标顶上，反而更大更显眼。所以改成一个确实存在、
+     但只占正中 2/24 的点：系统没理由替换它，看上去也几乎没有。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#00000000"
-        android:pathData="M0,0 L24,0 L24,24 L0,24 Z" />
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,11 a1,1 0 1,0 0.01,0 Z" />
 </vector>

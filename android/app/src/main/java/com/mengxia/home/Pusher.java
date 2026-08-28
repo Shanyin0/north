@@ -13,6 +13,8 @@ import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.SystemClock;
@@ -107,7 +109,9 @@ public class Pusher {
         return null;
     }
 
-    /** 通知里的头像要方的、要小的：先居中裁成正方形，再缩到 256。 */
+    /** 通知里的头像要方的：先居中裁成正方形，再缩到 512。
+     *  512 不是随手写的 —— 下面 adaptiveFace 会把它放进内圈，
+     *  只剩三分之二能看见，从 256 起步的话缩完就糊了。 */
     private static Bitmap square(Bitmap src) {
         if (src == null) return null;
         try {
@@ -115,10 +119,37 @@ public class Pusher {
             if (w <= 0 || h <= 0) return null;
             int side = Math.min(w, h);
             Bitmap cut = Bitmap.createBitmap(src, (w - side) / 2, (h - side) / 2, side, side);
-            if (side <= 256) return cut;
-            return Bitmap.createScaledBitmap(cut, 256, 256, true);
+            if (side <= 512) return cut;
+            return Bitmap.createScaledBitmap(cut, 512, 512, true);
         } catch (Exception e) {
             return src;
+        }
+    }
+
+    /**
+     * 把他的脸垫成「自适应图标」那种尺寸。
+     *
+     * 自适应图标只保证中间那 72/108（约三分之二）不会被裁掉，外面一圈系统随便切。
+     * 直接把一张脸交上去，切完就只剩鼻子了。所以先摊到 1.5 倍的画布上、
+     * 脸放正中间，切完正好是完整的一张脸。
+     * 外面那一圈填成 app 的米色，万一哪个系统把整块都画出来，看着也是有意的。
+     */
+    private static Bitmap adaptiveFace(Bitmap face) {
+        if (face == null) return null;
+        try {
+            int inner = face.getWidth();
+            if (inner <= 0) return face;
+            int side = Math.round(inner * 1.5f);          // 108 / 72 = 1.5
+            Bitmap out = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(out);
+            c.drawColor(0xFFF6F0E4);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setFilterBitmap(true);
+            int at = (side - inner) / 2;
+            c.drawBitmap(face, at, at, p);
+            return out;
+        } catch (Exception e) {
+            return face;
         }
     }
 
@@ -422,7 +453,9 @@ public class Pusher {
             Bitmap av = avatar(ctx);
 
             // 左边那一格要的是先生的头像。系统会在头像角上再盖一个 smallIcon ——
-            // 就是她说的"角标"。有他的脸就把 smallIcon 换成全透明的，别盖在他脸上；
+            // 就是她说的"角标"。有他的脸就换成 ic_noti_blank：一个极小的单色点。
+            // 以前那个是全透明的 —— 有的系统把全透明当成无效图标，转头拿软件图标
+            // 顶上，反而更大。留一个很小但确实存在的点，它就没理由替换了。
             // 实在没有头像才退回那颗小心心，不然通知连个图标都没有
             b.setSmallIcon(av != null ? R.drawable.ic_noti_blank : R.drawable.ic_noti)
                     .setContentTitle(title)
@@ -439,13 +472,24 @@ public class Pusher {
             //   对话通知  头像在左边（她要的），但系统会在头像右下角盖一个小角标
             // 她看过两种，选了对话通知。角标的大小和透明度没有任何接口能调 ——
             // 那一格是系统画的，app 只能决定「画什么」，决定不了「画多大、多淡」。
-            // 我们能做的就是把 smallIcon 换成全透明的（上面那行）：
-            // 系统真按 smallIcon 画的话，那儿就是空的；
-            // 要是它按软件图标画（有的定制系统这么干），那就只能换软件图标了。
+            // 我们能做的是两件：一、smallIcon 换成极小的一个点（上面那行）；
+            // 二、会话头像交自适应图标（下面），别让系统因为认不出而退回软件图标。
+            // 要是它压根不看 smallIcon、直接按软件图标画（有的定制系统这么干），
+            // 那就只剩换软件图标这一条路了。
             boolean asChat = false;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
-                    Icon face = (av != null) ? Icon.createWithBitmap(av) : null;
+                    // 会话头像要的是「自适应」那种图标。以前用的是 createWithBitmap，
+                    // 有的系统不认，不认就当作没有头像 —— 于是整格退回软件图标，
+                    // 看着就是「一个很大的应用图标压住了他的脸」。
+                    Icon face = null;
+                    if (av != null) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            face = Icon.createWithAdaptiveBitmap(adaptiveFace(av));
+                        } else {
+                            face = Icon.createWithBitmap(av);
+                        }
+                    }
                     Person.Builder pb = new Person.Builder().setKey("sir").setName(title).setImportant(true);
                     if (face != null) pb.setIcon(face);
                     Person sir = pb.build();
@@ -458,6 +502,10 @@ public class Pusher {
                             text, System.currentTimeMillis(), sir));
                     b.setStyle(st);
                     b.addPerson(sir);
+                    // MessagingStyle 正常会忽略 largeIcon。还是挂上 ——
+                    // 有的系统在会话头像取不到的时候会拿它兜底，
+                    // 拿他的脸兜底，总好过拿软件图标兜底
+                    if (av != null) b.setLargeIcon(av);
                     // 快捷方式登记成功，系统才肯按对话通知排版（头像在最前）
                     if (pushConversation(ctx, title, face, sir)) {
                         b.setShortcutId(SHORTCUT_ID);
