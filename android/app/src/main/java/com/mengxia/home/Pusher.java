@@ -55,8 +55,18 @@ public class Pusher {
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pi = PendingIntent.getBroadcast(ctx, ALARM_ID, i, flags);
-            am.setInexactRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    SystemClock.elapsedRealtime() + INTERVAL, INTERVAL, pi);
+            long at = SystemClock.elapsedRealtime() + INTERVAL;
+            // 以前用的是 setInexactRepeating：手机打瞌睡（Doze）的时候，
+            // 系统会把这种闹钟攒起来等醒了一起放，能拖一两个钟头 ——
+            // 她说「并没有说可以随时通知」，多半就是这么被拖的。
+            // setAndAllowWhileIdle 是打瞌睡也照响的那种，还不用申请
+            // SCHEDULE_EXACT_ALARM 那个权限。代价是一次只能订一个，
+            // 所以每响一次，PushReceiver 都得再订下一次。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
+            } else {
+                am.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi);
+            }
         } catch (Exception ignored) {}
     }
 
@@ -139,12 +149,19 @@ public class Pusher {
         int h = c.get(Calendar.HOUR_OF_DAY);
         int d = c.get(Calendar.DAY_OF_WEEK);           // 1=周日 7=周六
         boolean weekend = (d == 1 || d == 7);
-        if (weekend ? (h >= 2 && h < 12) : (h >= 0 && h < 8)) return "sleep";
+        // 不打扰的那一段，序章里她自己改。默认还是原来那两段
+        int qf = weekend ? cfg.optInt("quietWeFrom", 2) : cfg.optInt("quietWdFrom", 0);
+        int qt = weekend ? cfg.optInt("quietWeTo", 12) : cfg.optInt("quietWdTo", 8);
+        if (inQuiet(h, qf, qt)) return "sleep";
 
         SharedPreferences sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE);
         long last = sp.getLong("lastMsgTs", 0);
         int cd = sp.getInt("cooldown", 0);
-        if (cd <= 0) { cd = 120 + new Random().nextInt(91); sp.edit().putInt("cooldown", cd).apply(); }
+        // 她把区间改小了，之前掷出来那个大数还留在 prefs 里 —— 落到区间外就重掷
+        if (cd < gapLo(cfg) || cd > gapHi(cfg)) {
+            cd = rollGap(cfg);
+            sp.edit().putInt("cooldown", cd).apply();
+        }
         if (System.currentTimeMillis() - last < cd * 60000L) return "cooldown";
 
         String today = today();
@@ -152,6 +169,26 @@ public class Pusher {
         int used = day.equals(today) ? sp.getInt("usedToday", 0) : 0;
         if (used >= cfg.optInt("pushMax", 5)) return "limit";
         return "";
+    }
+
+    /** 两头填一样＝不设。跨零点也算数，比如 23 到 7 */
+    static boolean inQuiet(int h, int from, int to) {
+        if (from == to) return false;
+        if (from < to) return h >= from && h < to;
+        return h >= from || h < to;
+    }
+
+    static int gapLo(JSONObject cfg) {
+        return Math.max(5, cfg.optInt("gapMin", 120));
+    }
+
+    static int gapHi(JSONObject cfg) {
+        return Math.max(gapLo(cfg), cfg.optInt("gapMax", 210));
+    }
+
+    static int rollGap(JSONObject cfg) {
+        int lo = gapLo(cfg), hi = gapHi(cfg);
+        return lo + new Random().nextInt(hi - lo + 1);
     }
 
     private static String today() {
@@ -207,7 +244,7 @@ public class Pusher {
             if (sent == 0) return;
             SharedPreferences.Editor e = sp.edit();
             e.putLong("lastMsgTs", System.currentTimeMillis());
-            e.putInt("cooldown", 120 + new Random().nextInt(91));
+            e.putInt("cooldown", rollGap(cfg));
             String today = today();
             int used = today.equals(sp.getString("day", "")) ? sp.getInt("usedToday", 0) : 0;
             e.putString("day", today);
