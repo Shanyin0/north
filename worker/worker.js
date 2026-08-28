@@ -101,7 +101,7 @@ export default {
         D1: !!env.DB,
         看得见的名字: names,
         上游: upHost,
-        这份代码: '2026-08-23 e（备份留版本 + 聊天流水账）'
+        这份代码: '2026-08-28 f（备份留版本 + 聊天流水账 + 声音转一手）'
       });
     }
 
@@ -346,6 +346,90 @@ export default {
       const out = {};
       try { r.headers.forEach((v, k) => { out[k.toLowerCase()] = v; }); } catch (e) {}
       return json({ status: r.status, headers: out, body: body });
+    }
+
+    // ---------- 3.5 声音转一手 ----------
+    // 手机上的网页去请求语音站点会被跨域挡住（她看到的就是 Failed to fetch）。
+    // Worker 不受这个限制。地址和 key 是手机每次带上来的 —— 这儿一份都不存。
+    // 要口令才用得了，所以不是谁都能拿它当代理。
+    if (path === '/voice/tts' || path === '/voice/stt') {
+      if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
+      let q;
+      try { q = await req.json(); } catch (e) { return json({ error: '要 JSON' }, 400); }
+      const base = String(q.base || '').replace(/\/+$/, '').replace(/\/v1$/i, '');
+      const key = String(q.key || '').trim();
+      if (!/^https:\/\//i.test(base)) return json({ error: '地址要是 https 开头的' }, 400);
+      let host = '';
+      try { host = new URL(base).host; } catch (e) { return json({ error: '这不像个网址' }, 400); }
+      // 别让它去戳内网
+      if (/^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|\[)/i.test(host)
+          || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return json({ error: '不转内网地址' }, 403);
+      if (!key) return json({ error: '没带 key' }, 400);
+      const eleven = q.kind === 'eleven';
+
+      if (path === '/voice/tts') {
+        const t = String(q.text || '').slice(0, 2000);
+        if (!t) return json({ error: '没有字' }, 400);
+        let u, h, b;
+        if (eleven) {
+          u = base + '/v1/text-to-speech/' + encodeURIComponent(String(q.voice || ''));
+          h = { 'Content-Type': 'application/json', 'xi-api-key': key, 'Accept': 'audio/mpeg' };
+          b = JSON.stringify({ text: t, model_id: String(q.model || '') || 'eleven_multilingual_v2' });
+        } else {
+          u = base + '/v1/audio/speech';
+          h = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key };
+          b = JSON.stringify({ model: String(q.model || ''), voice: String(q.voice || 'alloy'), input: t, response_format: 'mp3' });
+        }
+        let r;
+        try { r = await fetch(u, { method: 'POST', headers: h, body: b }); }
+        catch (e) { return json({ error: '语音站连不上：' + e.message }, 502); }
+        if (!r.ok) {
+          const why = await r.text();
+          return json({ error: 'HTTP ' + r.status + '：' + why.replace(/\s+/g, ' ').slice(0, 200) }, 502);
+        }
+        return new Response(r.body, {
+          status: 200,
+          headers: Object.assign({ 'Content-Type': r.headers.get('Content-Type') || 'audio/mpeg' }, CORS)
+        });
+      }
+
+      // 转文字：手机把录音变成 base64 送上来，这儿拼成表单再发出去
+      const raw = String(q.data || '');
+      if (!raw) return json({ error: '没有录音' }, 400);
+      let bytes;
+      try {
+        const bin = atob(raw);
+        bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      } catch (e) { return json({ error: '录音读不出来' }, 400); }
+      if (bytes.length > 8 * 1024 * 1024) return json({ error: '录音太大了' }, 413);
+      const mime = String(q.mime || 'audio/webm').split(';')[0];
+      const ext = mime.indexOf('mp4') >= 0 ? 'm4a' : (mime.indexOf('ogg') >= 0 ? 'ogg' : (mime.indexOf('wav') >= 0 ? 'wav' : (mime.indexOf('mpeg') >= 0 ? 'mp3' : 'webm')));
+      const fd = new FormData();
+      fd.append('file', new Blob([bytes], { type: mime }), 'v.' + ext);
+      let u2, h2;
+      if (eleven) {
+        u2 = base + '/v1/speech-to-text';
+        h2 = { 'xi-api-key': key };
+        fd.append('model_id', String(q.model || '') || 'scribe_v2');
+        fd.append('tag_audio_events', 'true');
+        fd.append('diarize', 'false');
+        if (q.lang) fd.append('language_code', String(q.lang));
+      } else {
+        u2 = base + '/v1/audio/transcriptions';
+        h2 = { 'Authorization': 'Bearer ' + key };
+        fd.append('model', String(q.model || '') || 'whisper-large-v3');
+        if (q.lang) fd.append('language', String(q.lang));
+        fd.append('response_format', 'json');
+      }
+      let r2;
+      try { r2 = await fetch(u2, { method: 'POST', headers: h2, body: fd }); }
+      catch (e) { return json({ error: '语音站连不上：' + e.message }, 502); }
+      const out = await r2.text();
+      if (!r2.ok) return json({ error: 'HTTP ' + r2.status + '：' + out.replace(/\s+/g, ' ').slice(0, 200) }, 502);
+      let j = null;
+      try { j = JSON.parse(out); } catch (e) {}
+      return json({ text: String((j && j.text) || '').trim() });
     }
 
     // ---------- 4. 小工具 ----------
