@@ -71,26 +71,30 @@ jobs:
           name: mengxia-apk
           path: out/*.apk
 
-      - name: 发布到 Releases（手机上直接下）
+      - name: 发布到 Releases（只留最近三个，最新的在最上面）
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 每一版都单独留一个 release，永远不删 —— 以前这儿是
-          # 「gh release delete apk」，等于每打一版就把上一版抹掉，
-          # 她想装回某个旧版本的时候什么都找不到。别再这么干。
+          # 她 8/29 改的主意。这儿原来写着「每一版都留着，永远不删」——
+          # 攒到七十多个，页面翻不完。现在只留最近三个。
+          # 这是她要的，不是我省事，别再改回去。
           STAMP=$(cat build.txt 2>/dev/null || echo "")
           gh release create "v$VER" out/*.apk \
             --title "梦匣 App · $VER" \
-            --notes "这一版的安装包，永远留着，随时装得回来。内置页面 $STAMP。手机上的聊天、日记、照片都在各自的地方存着，换版本不动它们。" \
-            || echo "v$VER 已经有了，跳过"
+            --notes "内置页面 $STAMP。覆盖装就行，别卸载 —— 聊天、日记、照片都在各自的地方存着，换版本不动它们。" \
+            || gh release upload "v$VER" out/*.apk --clobber
 
-          # 另外维持一个固定的 apk 标签，永远指向最新那一版 —— 她习惯从这里下。
-          # 只换里面的文件，不删 release
-          if gh release view apk >/dev/null 2>&1; then
-            gh release upload apk out/*.apk --clobber
-            gh release edit apk --title "梦匣 App · $VER（最新）"
-          else
-            gh release create apk out/*.apk \
-              --title "梦匣 App · $VER（最新）" \
-              --notes "这里永远是最新的一版。想装回旧版本，去 Releases 里翻 v1.x.x。"
-          fi
+          # 以前还维持一个固定的 apk 标签指向最新，删掉了：
+          # 它的日期停在建它那天，在 Releases 页永远沉在最底下 ——
+          # 一个标着「最新」的东西挂在最下面，只会让人下错。
+          # 现在最上面那个就是最新的。
+          gh release delete apk --cleanup-tag -y 2>/dev/null || true
+
+          # 按时间倒序，第四个往后连 tag 一起删
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' > old.txt || true
+          while read -r t; do
+            [ -z "$t" ] && continue
+            echo "删掉旧版本 $t"
+            gh release delete "$t" --cleanup-tag -y || true
+          done < old.txt
