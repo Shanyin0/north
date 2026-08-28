@@ -71,30 +71,30 @@ jobs:
           name: mengxia-apk
           path: out/*.apk
 
-      - name: 发布到 Releases（只留最近三个，最新的在最上面）
+      - name: 发布到 Releases（每一版都留着，写明这一版改了什么）
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 她 8/29 改的主意。这儿原来写着「每一版都留着，永远不删」——
-          # 攒到七十多个，页面翻不完。现在只留最近三个。
-          # 这是她要的，不是我省事，别再改回去。
+          # 这儿的账按时间记一下，省得再来回改：
+          #   8/22 每一版都留 → 8/29 上午只留三个（攒了七十多个翻不完）
+          #   → 8/29 晚上又改回每一版都留。这是她第二回说了，就这么定了。
+          # 页面本来就是新的排最上面，不用另外排 —— 前提是别再造那种日期
+          # 停住不动的固定标签（以前那个 apk 标签就是，已经删掉了）。
           STAMP=$(cat build.txt 2>/dev/null || echo "")
+
+          # 这一版改了什么：直接拿这次提交的说明，不再写那句放之四海皆准的套话。
+          # 结尾的署名行不往外贴。
+          SUB=$(git log -1 --pretty=%s)
+          git log -1 --pretty=%b \
+            | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' -e '^https://claude\.ai/' \
+            > notes.md
+          {
+            echo
+            echo "---"
+            echo "内置页面 \`$STAMP\`。覆盖装就行，别卸载 —— 聊天、日记、照片都在各自的地方存着，换版本不动它们。"
+          } >> notes.md
+
           gh release create "v$VER" out/*.apk \
-            --title "梦匣 App · $VER" \
-            --notes "内置页面 $STAMP。覆盖装就行，别卸载 —— 聊天、日记、照片都在各自的地方存着，换版本不动它们。" \
+            --title "$VER · $SUB" \
+            --notes-file notes.md \
             || gh release upload "v$VER" out/*.apk --clobber
-
-          # 以前还维持一个固定的 apk 标签指向最新，删掉了：
-          # 它的日期停在建它那天，在 Releases 页永远沉在最底下 ——
-          # 一个标着「最新」的东西挂在最下面，只会让人下错。
-          # 现在最上面那个就是最新的。
-          gh release delete apk --cleanup-tag -y 2>/dev/null || true
-
-          # 按时间倒序，第四个往后连 tag 一起删
-          gh release list --limit 100 --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' > old.txt || true
-          while read -r t; do
-            [ -z "$t" ] && continue
-            echo "删掉旧版本 $t"
-            gh release delete "$t" --cleanup-tag -y || true
-          done < old.txt

@@ -5,12 +5,17 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Person;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.SystemClock;
 import android.util.Base64;
@@ -104,7 +109,9 @@ public class Pusher {
         return null;
     }
 
-    /** 通知里的头像要方的：先居中裁成正方形，再缩到 512。 */
+    /** 通知里的头像要方的：先居中裁成正方形，再缩到 512。
+     *  512 不是随手写的 —— 下面 adaptiveFace 会把它放进内圈，
+     *  只剩三分之二能看见，从 256 起步的话缩完就糊了。 */
     private static Bitmap square(Bitmap src) {
         if (src == null) return null;
         try {
@@ -116,6 +123,33 @@ public class Pusher {
             return Bitmap.createScaledBitmap(cut, 512, 512, true);
         } catch (Exception e) {
             return src;
+        }
+    }
+
+    /**
+     * 把他的脸垫成「自适应图标」那种尺寸。
+     *
+     * 自适应图标只保证中间那 72/108（约三分之二）不会被裁掉，外面一圈系统随便切。
+     * 直接把一张脸交上去，切完就只剩鼻子了。所以先摊到 1.5 倍的画布上、
+     * 脸放正中间，切完正好是完整的一张脸。
+     * 外面那一圈填成 app 的米色，万一哪个系统把整块都画出来，看着也是有意的。
+     */
+    private static Bitmap adaptiveFace(Bitmap face) {
+        if (face == null) return null;
+        try {
+            int inner = face.getWidth();
+            if (inner <= 0) return face;
+            int side = Math.round(inner * 1.5f);          // 108 / 72 = 1.5
+            Bitmap out = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(out);
+            c.drawColor(0xFFF6F0E4);
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setFilterBitmap(true);
+            int at = (side - inner) / 2;
+            c.drawBitmap(face, at, at, p);
+            return out;
+        } catch (Exception e) {
+            return face;
         }
     }
 
@@ -418,9 +452,12 @@ public class Pusher {
             else b = new Notification.Builder(ctx);
             Bitmap av = avatar(ctx);
 
-            // 这条通知是「梦匣这个软件发出来的」，不是「软件里的某个人发出来的」。
-            // 所以图标就用软件自己那颗心，不再拿极小的点去躲角标 —— 已经没有角标了
-            b.setSmallIcon(R.drawable.ic_noti)
+            // 左边那一格要的是先生的头像。系统会在头像角上再盖一个 smallIcon ——
+            // 就是她说的"角标"。有他的脸就换成 ic_noti_blank：一个极小的单色点。
+            // 以前那个是全透明的 —— 有的系统把全透明当成无效图标，转头拿软件图标
+            // 顶上，反而更大。留一个很小但确实存在的点，它就没理由替换了。
+            // 实在没有头像才退回那颗小心心，不然通知连个图标都没有
+            b.setSmallIcon(av != null ? R.drawable.ic_noti_blank : R.drawable.ic_noti)
                     .setContentTitle(title)
                     .setContentText(text)
                     .setAutoCancel(true)
@@ -428,28 +465,61 @@ public class Pusher {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try { b.setBadgeIconType(Notification.BADGE_ICON_NONE); } catch (Exception ignored) {}
             }
-            // 这一处来回改过三轮，把账记全了，别再来第四轮：
+            // 对话通知：他的头像在最前面，后面才是话 —— 她要的就是这个排版。
             //
-            //   会话通知（MessagingStyle + Person + 快捷方式）
-            //     头像在最左边、一条一张卡片 —— 但系统一定会在头像右下角
-            //     盖一个软件角标，大小和透明度没有任何接口能调。
-            //   普通 MessagingStyle（去掉快捷方式）
-            //     头像干净了 —— 但 MIUI 把同一个软件的几条并成一条，
-            //     展开是几行小字，不是几张卡片。
-            //   普通通知（现在这个）
-            //     系统认的是「梦匣这个软件发的」，不是「软件里某个人发的」，
-            //     所以不进会话那套排版，几条就是几条，展开各自一张完整卡片。
-            //     代价：左边那一格是软件图标，不是他的脸；脸挂在右边。
-            //
-            // 她看过前两种，都不是她要的。这是第三种 —— 她朋友那个「小窝」
-            // 就是这么发的。MessagingStyle 和 Person 一个都不能留：
-            // 只要挂上 Person，安卓就当成「软件里的人在说话」，又绕回去了。
-            b.setStyle(new Notification.BigTextStyle().bigText(text));
-            if (av != null) b.setLargeIcon(av);
+            // 来回过两轮了，把两边的账记在这儿，别再来第三轮：
+            //   普通通知  头像挂在右边，脸上干净
+            //   对话通知  头像在左边（她要的），但系统会在头像右下角盖一个小角标
+            // 她看过两种，选了对话通知。角标的大小和透明度没有任何接口能调 ——
+            // 那一格是系统画的，app 只能决定「画什么」，决定不了「画多大、多淡」。
+            // 我们能做的是两件：一、smallIcon 换成极小的一个点（上面那行）；
+            // 二、会话头像交自适应图标（下面），别让系统因为认不出而退回软件图标。
+            // 要是它压根不看 smallIcon、直接按软件图标画（有的定制系统这么干），
+            // 那就只剩换软件图标这一条路了。
+            boolean asChat = false;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                try {
+                    // 会话头像要的是「自适应」那种图标。以前用的是 createWithBitmap，
+                    // 有的系统不认，不认就当作没有头像 —— 于是整格退回软件图标，
+                    // 看着就是「一个很大的应用图标压住了他的脸」。
+                    Icon face = null;
+                    if (av != null) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            face = Icon.createWithAdaptiveBitmap(adaptiveFace(av));
+                        } else {
+                            face = Icon.createWithBitmap(av);
+                        }
+                    }
+                    Person.Builder pb = new Person.Builder().setKey("sir").setName(title).setImportant(true);
+                    if (face != null) pb.setIcon(face);
+                    Person sir = pb.build();
+                    Person her = new Person.Builder().setKey("me").setName("我").build();
 
-            // 之前登记过的对话快捷方式得撕掉。留着的话系统还记得「先生」是个
-            // 会话人，新通知有机会被它自己认回会话那套，白改
-            dropConversation(ctx);
+                    // 一条通知里只放这一句 —— 她要的是「一句就是一条」，
+                    // 不是把几句攒在一条里
+                    Notification.MessagingStyle st = new Notification.MessagingStyle(her);
+                    st.addMessage(new Notification.MessagingStyle.Message(
+                            text, System.currentTimeMillis(), sir));
+                    b.setStyle(st);
+                    b.addPerson(sir);
+                    // MessagingStyle 正常会忽略 largeIcon。还是挂上 ——
+                    // 有的系统在会话头像取不到的时候会拿它兜底，
+                    // 拿他的脸兜底，总好过拿软件图标兜底
+                    if (av != null) b.setLargeIcon(av);
+                    // 快捷方式登记成功，系统才肯按对话通知排版（头像在最前）
+                    if (pushConversation(ctx, title, face, sir)) {
+                        b.setShortcutId(SHORTCUT_ID);
+                        asChat = true;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // 排不上对话样式（安卓太老、或者快捷方式没登记上）就退回普通通知：
+            // 至少把他的脸挂上，别只剩一个软件图标
+            if (!asChat) {
+                b.setStyle(new Notification.BigTextStyle().bigText(text));
+                if (av != null) b.setLargeIcon(av);
+            }
 
             notiSeq = (notiSeq + 1) % 20;
             nm.notify(NOTI_ID + notiSeq, b.build());
@@ -457,20 +527,30 @@ public class Pusher {
     }
 
     /**
-     * 把以前登记的那个"先生"对话快捷方式撕掉。
-     * 装过旧版本的机器上它还留着，不撕干净，系统有可能照旧把通知
-     * 认回会话那套排版 —— 头像右下角那个角标就又回来了。
+     * 把"先生"注册成一个长期存在的对话快捷方式。
+     * 系统认出它之后，通知就会按聊天的样子排：头像在最前，内容跟在后面。
      */
-    private static void dropConversation(Context ctx) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return;
+    private static boolean pushConversation(Context ctx, String name, Icon face, Person sir) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false;
         try {
             ShortcutManager sm = ctx.getSystemService(ShortcutManager.class);
-            if (sm == null) return;
-            java.util.List<String> one = java.util.Collections.singletonList(SHORTCUT_ID);
-            sm.removeDynamicShortcuts(one);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                try { sm.removeLongLivedShortcuts(one); } catch (Exception ignored) {}
-            }
-        } catch (Exception ignored) {}
+            if (sm == null) return false;
+            Intent open = new Intent(ctx, MainActivity.class);
+            open.setAction(Intent.ACTION_VIEW);
+            open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            ShortcutInfo.Builder sb = new ShortcutInfo.Builder(ctx, SHORTCUT_ID)
+                    .setShortLabel(name)
+                    .setLongLabel(name)
+                    .setLongLived(true)
+                    .setPerson(sir)
+                    .setIntent(open);
+            if (face != null) sb.setIcon(face);
+            ShortcutInfo si = sb.build();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) sm.pushDynamicShortcut(si);
+            else sm.addDynamicShortcuts(java.util.Collections.singletonList(si));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
