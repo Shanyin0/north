@@ -9,7 +9,6 @@ import android.app.Person;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -467,15 +466,22 @@ public class Pusher {
             }
             // 对话通知：他的头像在最前面，后面才是话 —— 她要的就是这个排版。
             //
-            // 来回过两轮了，把两边的账记在这儿，别再来第三轮：
-            //   普通通知  头像挂在右边，脸上干净
-            //   对话通知  头像在左边（她要的），但系统会在头像右下角盖一个小角标
-            // 她看过两种，选了对话通知。角标的大小和透明度没有任何接口能调 ——
-            // 那一格是系统画的，app 只能决定「画什么」，决定不了「画多大、多淡」。
-            // 我们能做的是两件：一、smallIcon 换成极小的一个点（上面那行）；
-            // 二、会话头像交自适应图标（下面），别让系统因为认不出而退回软件图标。
-            // 要是它压根不看 smallIcon、直接按软件图标画（有的定制系统这么干），
-            // 那就只剩换软件图标这一条路了。
+            // 头像右下角那个角标是从哪来的 —— 查了三轮，结论记在这儿：
+            //
+            // 它不是我们画的，是「会话通知」这个系统模板自带的。
+            // Android 11+ 的会话布局左边固定两层：底下会话头像，
+            // 右下角强制盖一个代表 app 的小徽标。大小、透明度、画什么，
+            // 一个接口都没有 —— 原生上它画 smallIcon，MIUI 上直接画桌面图标，
+            // 所以上一轮把 smallIcon 换成极小的点，在她手机上一点效果都没有。
+            //
+            // 而这个布局是 pushConversation() 登记的会话快捷方式 +
+            // setShortcutId() 触发的。那就是源头。不登记快捷方式，
+            // 系统就不按会话布局排，那一格徽标压根不会被画出来。
+            //
+            // MessagingStyle 留着 —— 它自己就会把发言人的头像画在每条消息左边，
+            // 一条通知一句话、能往下堆，这些都不变。变的只是不再被排进
+            // 「会话」那一栏，于是没有那个徽标。
+            dropConversation(ctx);
             boolean asChat = false;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
@@ -503,18 +509,17 @@ public class Pusher {
                     b.setStyle(st);
                     b.addPerson(sir);
                     // MessagingStyle 正常会忽略 largeIcon。还是挂上 ——
-                    // 有的系统在会话头像取不到的时候会拿它兜底，
+                    // 有的系统在头像取不到的时候会拿它兜底，
                     // 拿他的脸兜底，总好过拿软件图标兜底
                     if (av != null) b.setLargeIcon(av);
-                    // 快捷方式登记成功，系统才肯按对话通知排版（头像在最前）
-                    if (pushConversation(ctx, title, face, sir)) {
-                        b.setShortcutId(SHORTCUT_ID);
-                        asChat = true;
-                    }
+                    // 这儿原来还有一句 setShortcutId(SHORTCUT_ID) —— 就是它把这条
+                    // 通知推进「会话」那一栏，右下角那个 app 徽标才跟着来的。去掉了。
+                    // MessagingStyle 排上了就算数，不再登记会话快捷方式。
+                    asChat = true;
                 } catch (Exception ignored) {}
             }
 
-            // 排不上对话样式（安卓太老、或者快捷方式没登记上）就退回普通通知：
+            // 排不上 MessagingStyle（安卓太老、或者上面那段抛了）才退回普通通知：
             // 至少把他的脸挂上，别只剩一个软件图标
             if (!asChat) {
                 b.setStyle(new Notification.BigTextStyle().bigText(text));
@@ -527,30 +532,27 @@ public class Pusher {
     }
 
     /**
-     * 把"先生"注册成一个长期存在的对话快捷方式。
-     * 系统认出它之后，通知就会按聊天的样子排：头像在最前，内容跟在后面。
+     * 把以前登记过的那个"先生"会话快捷方式撤掉。
+     *
+     * 原来这儿是 pushConversation()：登记一个长期会话快捷方式，
+     * 让系统按会话通知排版（头像在最前）。代价是会话布局强制在头像
+     * 右下角盖一个 app 徽标 —— 大小、透明度、画什么都没有接口，
+     * 原生画 smallIcon，MIUI 直接画桌面图标。她要的就是这个徽标消失。
+     *
+     * 光是不再 setShortcutId 还不够：那条快捷方式一直存在系统里，
+     * 系统仍然可能凭它把这条通知认成会话。所以主动删掉。
+     * 删的只是通知用的那条动态快捷方式，桌面图标、长按菜单都不受影响。
      */
-    private static boolean pushConversation(Context ctx, String name, Icon face, Person sir) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false;
+    private static void dropConversation(Context ctx) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) return;
         try {
             ShortcutManager sm = ctx.getSystemService(ShortcutManager.class);
-            if (sm == null) return false;
-            Intent open = new Intent(ctx, MainActivity.class);
-            open.setAction(Intent.ACTION_VIEW);
-            open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            ShortcutInfo.Builder sb = new ShortcutInfo.Builder(ctx, SHORTCUT_ID)
-                    .setShortLabel(name)
-                    .setLongLabel(name)
-                    .setLongLived(true)
-                    .setPerson(sir)
-                    .setIntent(open);
-            if (face != null) sb.setIcon(face);
-            ShortcutInfo si = sb.build();
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) sm.pushDynamicShortcut(si);
-            else sm.addDynamicShortcuts(java.util.Collections.singletonList(si));
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+            if (sm == null) return;
+            java.util.List<String> one = java.util.Collections.singletonList(SHORTCUT_ID);
+            try { sm.removeDynamicShortcuts(one); } catch (Exception ignored) {}
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try { sm.removeLongLivedShortcuts(one); } catch (Exception ignored) {}
+            }
+        } catch (Exception ignored) {}
     }
 }
