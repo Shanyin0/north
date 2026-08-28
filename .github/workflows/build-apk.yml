@@ -82,17 +82,15 @@ jobs:
           # 停住不动的固定标签（以前那个 apk 标签就是，已经删掉了）。
           STAMP=$(cat build.txt 2>/dev/null || echo "")
 
-          # 这一版改了什么：直接拿这次提交的说明，不再写那句放之四海皆准的套话。
-          # 结尾的署名行不往外贴。
+          # 这一版改了什么：只取提交说明里「- 」开头的那几行。
+          # 她 8/29：「简短一点，改了什么就说什么，看到很烦」。
+          # 所以提交正文该写多细写多细（那是给以后翻代码的人看的），
+          # 但发布页上只出现那几条短的。写提交时记得列几条「- 」，
+          # 一条都没有的话这儿就只剩标题。
           SUB=$(git log -1 --pretty=%s)
-          git log -1 --pretty=%b \
-            | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' -e '^https://claude\.ai/' \
-            > notes.md
-          {
-            echo
-            echo "---"
-            echo "内置页面 \`$STAMP\`。覆盖装就行，别卸载 —— 聊天、日记、照片都在各自的地方存着，换版本不动它们。"
-          } >> notes.md
+          git log -1 --pretty=%b | grep -E '^- ' | head -6 > notes.md
+          echo "" >> notes.md
+          echo "覆盖装，别卸载。内置页面 \`$STAMP\`" >> notes.md
 
           gh release create "v$VER" out/*.apk \
             --title "$VER · $SUB" \
