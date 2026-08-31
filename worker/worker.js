@@ -101,7 +101,7 @@ export default {
         D1: !!env.DB,
         看得见的名字: names,
         上游: upHost,
-        这份代码: '2026-08-28 f（备份留版本 + 聊天流水账 + 声音转一手）'
+        这份代码: '2026-08-31 g（备份留版本 + 聊天流水账 + 声音转一手 + 记忆独立域）'
       });
     }
 
@@ -133,6 +133,16 @@ export default {
         headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, CORS)
       });
     }
+
+    // D1 里那一行摊回手机认得的形状。extra 是整包塞进去的，取出来摊平
+    const memRow = r => {
+      let ex = {};
+      try { ex = JSON.parse(r.extra || '{}') || {}; } catch (e) {}
+      return Object.assign({
+        id: r.id, rev: r.rev, kind: r.kind, text: r.text,
+        tier: r.tier, weight: r.weight, at: r.at, upAt: r.up_at, del: r.del
+      }, ex);
+    };
 
     // ---------- 2. 备份 ----------
     // 以前这儿是「整份覆盖」：每次传上来直接盖掉 latest，另外按星期几留一份
@@ -288,6 +298,168 @@ export default {
       }
 
       return json({ error: '没有这个地址。有的是 /chat/put /chat/since /chat/stat /chat/dump' }, 404);
+    }
+
+
+    // ---------- 2.6 记忆（独立数据域） ----------
+    // 跟上面那条聊天流水账是两回事，一个字都不共用：
+    //   聊天  /chat/*  →  msgs 表      整份备份 /backup  →  KV 的 bk:*
+    //   记忆  /mem/*   →  mem_items 表  记忆备份 /mem/backup → KV 的 mem:*
+    //
+    // 铁律跟聊天那边一样，而且更严：
+    //   一、只追加。改一条记忆就多一行（同一个 id、更大的 rev），旧的那行留着。
+    //   二、认重复。UNIQUE(id, rev)，传一百遍也只有一行。
+    //   三、没有物理删除。手机上删一条记忆是 del=1，传上来也是新的一行。
+    //   四、手机是主，这儿是镜像。这儿挂了、满了，手机上照样用。
+    //
+    // 建表语句在 worker/README.md 里。没建表的话这一段直接告诉你，不影响别的路由。
+    if (path.startsWith('/mem/')) {
+      if (!pass(req, env)) return json({ error: whyNo(req, env) }, 401);
+      const what = path.slice('/mem/'.length);
+
+      // 记忆自己的整份备份。用 KV，前缀 mem:，跟聊天那份 bk:* 谁也盖不到谁
+      if (what === 'backup' || what === 'backup/list') {
+        if (!env.BK) return json({ error: 'Worker 还没绑 KV（变量名要写 BK）' }, 500);
+        const MKEEP = 20, MKEEP_MIN = 3;
+
+        if (what === 'backup/list') {
+          const ls = await env.BK.list({ prefix: 'mem:' });
+          const rows = ls.keys.map(k => Object.assign({ id: k.name.slice(4) }, k.metadata || {}))
+            .sort((a, b) => String(b.id).localeCompare(String(a.id)));
+          let cur = null;
+          try { cur = JSON.parse(await env.BK.get('mem_latest_id') || 'null'); } catch (e) {}
+          return json({ n: rows.length, latest: cur, list: rows });
+        }
+
+        if (req.method === 'PUT' || req.method === 'POST') {
+          const body = await req.text();
+          if (body.length > 24 * 1024 * 1024) return json({ error: '这一份太大了，超过 24MB' }, 413);
+          if (body.length < 2 || !/^[\s]*[\{\[]/.test(body)) return json({ error: '这不像一份记忆备份' }, 400);
+          const now = new Date();
+          const id = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+          const meta = { at: now.toISOString(), size: body.length };
+          // 先写新的，写成了才清旧的
+          await env.BK.put('mem:' + id, body, { metadata: meta });
+          await env.BK.put('mem_latest', body);
+          await env.BK.put('mem_latest_id', JSON.stringify(Object.assign({ id: id }, meta)));
+          let pruned = 0;
+          try {
+            const ls = await env.BK.list({ prefix: 'mem:' });
+            const names = ls.keys.map(k => k.name).sort();
+            const over = names.length - MKEEP;
+            if (over > 0) {
+              const kill = names.slice(0, Math.min(over, Math.max(0, names.length - MKEEP_MIN)));
+              for (const nm of kill) { await env.BK.delete(nm); pruned++; }
+            }
+          } catch (e) {}
+          return json({ ok: true, id: id, size: body.length, pruned: pruned });
+        }
+
+        if (req.method === 'GET') {
+          const which = url.searchParams.get('which') || 'mem_latest';
+          const key = which === 'mem_latest' ? 'mem_latest' : ('mem:' + which);
+          const v = await env.BK.get(key);
+          if (v === null) return json({ error: '没有这一份' }, 404);
+          return new Response(v, {
+            headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, CORS)
+          });
+        }
+        return json({ error: '只认 GET 和 PUT' }, 405);
+      }
+
+      // 下面这些要 D1
+      if (!env.DB) return json({ error: 'Worker 还没绑 D1（绑定名要写 DB）。建表语句看 worker/README.md' }, 500);
+
+      // 有多少条、什么状况
+      if (what === 'stat') {
+        const r = await env.DB.prepare(
+          'SELECT COUNT(*) rows, COUNT(DISTINCT id) n, MAX(sid) top,'
+          + ' SUM(CASE WHEN del = 1 THEN 1 ELSE 0 END) delRows,'
+          + ' MIN(at) lo, MAX(up_at) hi FROM mem_items').first().catch(() => null);
+        if (!r) return json({ error: 'mem_items 表还没建。建表语句看 worker/README.md' }, 500);
+        return json({ rows: r.rows || 0, n: r.n || 0, top: r.top || 0,
+                      delRows: r.delRows || 0, from: r.lo || 0, to: r.hi || 0 });
+      }
+
+      // 往上追加。body: { items: [ 一条记忆 ... ] }
+      if (what === 'put' && (req.method === 'POST' || req.method === 'PUT')) {
+        let body;
+        try { body = await req.json(); } catch (e) { return json({ error: '不是 JSON' }, 400); }
+        const list = (body && body.items) || [];
+        if (!Array.isArray(list)) return json({ error: 'items 要是个数组' }, 400);
+        if (list.length > 300) return json({ error: '一次最多 300 条' }, 413);
+
+        const st = env.DB.prepare(
+          'INSERT OR IGNORE INTO mem_items'
+          + ' (id, rev, kind, text, tier, weight, at, up_at, del, extra, got_at)'
+          + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const now = Date.now();
+        const rows = [];
+        for (const m of list) {
+          if (!m || typeof m !== 'object') continue;
+          const id = String(m.id == null ? '' : m.id).slice(0, 64);
+          if (!id) continue;                                  // 没身份的不收
+          const rev = Number(m.rev) || 1;
+          // 内容之外的那些字段整包塞进 extra，将来加字段不用改表
+          const extra = {};
+          ['pin', 'tags', 'alias', 'quote', 'vec', 'hits', 'hitAt', 'src', 'legacy']
+            .forEach(k => { if (m[k] !== undefined) extra[k] = m[k]; });
+          rows.push(st.bind(
+            id, rev,
+            String(m.kind || 'frag').slice(0, 24),
+            String(m.text == null ? '' : m.text).slice(0, 200000),
+            Number(m.tier) || 0,
+            Number(m.weight) || 0,
+            Number(m.at) || now,
+            Number(m.upAt) || now,
+            m.del ? 1 : 0,
+            JSON.stringify(extra).slice(0, 200000),
+            now));
+        }
+        if (!rows.length) return json({ ok: true, got: 0, note: '这一批里没有能收的' });
+        await env.DB.batch(rows);
+        const r = await env.DB.prepare('SELECT COUNT(*) rows, COUNT(DISTINCT id) n, MAX(sid) top FROM mem_items').first();
+        return json({ ok: true, got: rows.length, rows: (r && r.rows) || 0,
+                      n: (r && r.n) || 0, top: (r && r.top) || 0 });
+      }
+
+      // 往回捞，按入库顺序一页一页
+      if (what === 'since' && req.method === 'GET') {
+        const after = parseInt(url.searchParams.get('after') || '0', 10) || 0;
+        const lim = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 1), 300);
+        const r = await env.DB.prepare(
+          'SELECT sid, id, rev, kind, text, tier, weight, at, up_at, del, extra'
+          + ' FROM mem_items WHERE sid > ? ORDER BY sid LIMIT ?').bind(after, lim).all();
+        const rows = (r && r.results) || [];
+        return json({ n: rows.length, next: rows.length ? rows[rows.length - 1].sid : after,
+                      rows: rows.map(memRow) });
+      }
+
+      // 整个倒出来。同一个 id 只给 rev 最大那一版 —— 那是「现在」的样子。
+      // 旧的那些行一行不少地留在表里，要看历史走 /mem/since
+      if (what === 'dump' && req.method === 'GET') {
+        const r = await env.DB.prepare(
+          'SELECT m.sid, m.id, m.rev, m.kind, m.text, m.tier, m.weight, m.at, m.up_at, m.del, m.extra'
+          + ' FROM mem_items m'
+          + ' JOIN (SELECT id, MAX(rev) mx FROM mem_items GROUP BY id) t'
+          + ' ON m.id = t.id AND m.rev = t.mx'
+          + ' ORDER BY m.at').all();
+        const rows = (r && r.results) || [];
+        return json({ app: 'mengxia', kind: 'memory', v: 1, at: Date.now(),
+                      n: rows.length, items: rows.map(memRow) });
+      }
+
+      // 一条记忆的全部历史
+      if (what === 'trace' && req.method === 'GET') {
+        const id = url.searchParams.get('id') || '';
+        if (!id) return json({ error: '要带 ?id=' }, 400);
+        const r = await env.DB.prepare(
+          'SELECT sid, id, rev, kind, text, tier, weight, at, up_at, del, extra'
+          + ' FROM mem_items WHERE id = ? ORDER BY rev').bind(id).all();
+        return json({ id: id, rows: ((r && r.results) || []).map(memRow) });
+      }
+
+      return json({ error: '没有这个地址。有的是 /mem/put /mem/since /mem/stat /mem/dump /mem/trace /mem/backup' }, 404);
     }
 
     // ---------- 3. 转一手 ----------

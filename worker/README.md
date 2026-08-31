@@ -106,6 +106,40 @@ CREATE TABLE IF NOT EXISTS msgs (
 CREATE INDEX IF NOT EXISTS ix_msgs_cid_ts ON msgs (cid, ts);
 ```
 
+## 记忆那张表（独立数据域，跟上面那张没有任何关系）
+
+同一个 D1 库里另建一张表。**不要动 msgs**，那张表是聊天的。
+
+```sql
+CREATE TABLE IF NOT EXISTS mem_items (
+  sid    INTEGER PRIMARY KEY AUTOINCREMENT,
+  id     TEXT NOT NULL,          -- 这条记忆的身份，一旦生成就不变
+  rev    INTEGER NOT NULL,       -- 改一次加一。旧的那一行留着，不覆盖
+  kind   TEXT,                   -- frag / note / core / lore / dream / hidden
+  text   TEXT,
+  tier   INTEGER,                -- 层
+  weight REAL,                   -- 要紧程度
+  at     INTEGER,                -- 记下来的时候
+  up_at  INTEGER,                -- 这一版是什么时候写的
+  del    INTEGER DEFAULT 0,      -- 1 = 手机上删掉了。这儿只标记，不真删
+  extra  TEXT,                   -- JSON：钉住、标签、别名、原话、向量、来源
+  got_at INTEGER,                -- 收到的时间
+  UNIQUE(id, rev)                -- 同一版传一百遍也只有一行
+);
+CREATE INDEX IF NOT EXISTS ix_mem_id   ON mem_items (id, rev);
+CREATE INDEX IF NOT EXISTS ix_mem_upat ON mem_items (up_at);
+```
+
+三条规矩，跟聊天那张一样，而且更严：
+
+- **只追加。** 改一条记忆＝多一行（同 id、更大的 rev），旧的那行一直在。
+- **没有物理删除。** 手机上删一条是 `del=1`，传上来也只是新的一行。
+- **手机是主，这儿是镜像。** 这儿挂了、满了、口令错了，手机上照样用。
+
+口子：`/mem/put` 追加 · `/mem/since` 往回捞 · `/mem/stat` 看多少 ·
+`/mem/dump` 每个 id 的最新一版 · `/mem/trace?id=` 一条的全部历史 ·
+`/mem/backup` 记忆自己的整份备份（KV 前缀 `mem:`，跟聊天那份 `bk:*` 分开）。
+
 3. **不要在网页上加绑定。** 这个 Worker 从 Git 部署，bindings 以
    `wrangler.jsonc` 为准，网页上手动加的下一次部署会被冲掉。
    在 D1 那个库右边的 `...` → **Copy binding**，把复制到的
