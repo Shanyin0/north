@@ -110,34 +110,54 @@ CREATE INDEX IF NOT EXISTS ix_msgs_cid_ts ON msgs (cid, ts);
 
 同一个 D1 库里另建一张表。**不要动 msgs**，那张表是聊天的。
 
+整段复制到 **D1 → north → Console**，跑一次就行。跑第二次也不会出事
+（都带 `IF NOT EXISTS`）。
+
 ```sql
 CREATE TABLE IF NOT EXISTS mem_items (
-  sid    INTEGER PRIMARY KEY AUTOINCREMENT,
-  id     TEXT NOT NULL,          -- 这条记忆的身份，一旦生成就不变
-  rev    INTEGER NOT NULL,       -- 改一次加一。旧的那一行留着，不覆盖
-  kind   TEXT,                   -- frag / note / core / lore / dream / hidden
-  text   TEXT,
-  tier   INTEGER,                -- 层
-  weight REAL,                   -- 要紧程度
-  at     INTEGER,                -- 记下来的时候
-  up_at  INTEGER,                -- 这一版是什么时候写的
-  del    INTEGER DEFAULT 0,      -- 1 = 手机上删掉了。这儿只标记，不真删
-  extra  TEXT,                   -- JSON：钉住、标签、别名、原话、向量、来源
-  got_at INTEGER,                -- 收到的时间
-  UNIQUE(id, rev)                -- 同一版传一百遍也只有一行
+  sid        INTEGER PRIMARY KEY AUTOINCREMENT,
+  id         TEXT    NOT NULL,               -- 这条记忆的身份，一旦生成就不变
+  rev        INTEGER NOT NULL DEFAULT 1,     -- 改一次加一。旧的那一行留着，不覆盖
+  type       TEXT    NOT NULL DEFAULT 'other',
+  title      TEXT    NOT NULL DEFAULT '',
+  content    TEXT    NOT NULL DEFAULT '',    -- 正文
+  summary    TEXT    NOT NULL DEFAULT '',
+  importance REAL    NOT NULL DEFAULT 5,     -- 0..10，要紧程度
+  confidence REAL    NOT NULL DEFAULT 0.8,   -- 0..1，有多确定
+  valence    REAL    NOT NULL DEFAULT 0,     -- -1..1，愉不愉快
+  arousal    REAL    NOT NULL DEFAULT 0.3,   -- 0..1，起伏多大
+  resolved   INTEGER NOT NULL DEFAULT 1,     -- 0 = 还悬着
+  pinned     INTEGER NOT NULL DEFAULT 0,     -- 1 = 钉住，永不衰减
+  created_at INTEGER NOT NULL DEFAULT 0,     -- 记下来的时候
+  updated_at INTEGER NOT NULL DEFAULT 0,     -- 这一版是什么时候写的
+  del        INTEGER NOT NULL DEFAULT 0,     -- 1 = 手机上删掉了。这儿只标记，不真删
+  extra      TEXT    NOT NULL DEFAULT '{}',  -- JSON：标签、别名、原话、向量、来源、关联…
+  got_at     INTEGER NOT NULL DEFAULT 0,     -- 收到的时间
+  UNIQUE(id, rev)                            -- 同一版传一百遍也只有一行
 );
-CREATE INDEX IF NOT EXISTS ix_mem_id   ON mem_items (id, rev);
-CREATE INDEX IF NOT EXISTS ix_mem_upat ON mem_items (up_at);
+CREATE INDEX IF NOT EXISTS ix_mem_id    ON mem_items (id, rev);
+CREATE INDEX IF NOT EXISTS ix_mem_upat  ON mem_items (updated_at);
+CREATE INDEX IF NOT EXISTS ix_mem_type  ON mem_items (type);
 ```
+
+列名跟手机上那份 schema 一一对上。以前这儿写的是更早一版的名字
+（`kind` / `text` / `weight` / `at`），手机那边换过之后就对不上了 ——
+按那份建表，传上去的记忆正文会变成空串。这张表还没建过，所以直接按
+现在的字段来，不涉及改表。
+
+正文那几样单独占列（要按它们查、按它们排），剩下的整包塞在 `extra` 里，
+将来加字段不用动表结构。
 
 三条规矩，跟聊天那张一样，而且更严：
 
 - **只追加。** 改一条记忆＝多一行（同 id、更大的 rev），旧的那行一直在。
 - **没有物理删除。** 手机上删一条是 `del=1`，传上来也只是新的一行。
+  恢复也一样：又是新的一行，`del=0`，rev 更大。
 - **手机是主，这儿是镜像。** 这儿挂了、满了、口令错了，手机上照样用。
 
 口子：`/mem/put` 追加 · `/mem/since` 往回捞 · `/mem/stat` 看多少 ·
-`/mem/dump` 每个 id 的最新一版 · `/mem/trace?id=` 一条的全部历史 ·
+`/mem/dump` 每个 id 的最新一版 · `/mem/one?id=` 单独一条现在什么样 ·
+`/mem/trace?id=` 一条的全部历史 ·
 `/mem/backup` 记忆自己的整份备份（KV 前缀 `mem:`，跟聊天那份 `bk:*` 分开）。
 
 3. **不要在网页上加绑定。** 这个 Worker 从 Git 部署，bindings 以

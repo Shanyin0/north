@@ -134,13 +134,21 @@ export default {
       });
     }
 
-    // D1 里那一行摊回手机认得的形状。extra 是整包塞进去的，取出来摊平
+    // D1 里那一行摊回手机认得的形状。extra 是整包塞进去的，取出来摊平。
+    // 列名跟手机上那份 schema 一一对上 —— 以前这儿是 Phase 2 的老名字
+    // （kind / text / weight / at），手机换过之后就对不上了，
+    // 传上去的正文会变成空串
     const memRow = r => {
       let ex = {};
       try { ex = JSON.parse(r.extra || '{}') || {}; } catch (e) {}
       return Object.assign({
-        id: r.id, rev: r.rev, kind: r.kind, text: r.text,
-        tier: r.tier, weight: r.weight, at: r.at, upAt: r.up_at, del: r.del
+        id: r.id, rev: r.rev,
+        type: r.type, title: r.title, content: r.content, summary: r.summary,
+        importance: r.importance, confidence: r.confidence,
+        valence: r.valence, arousal: r.arousal,
+        resolved: !!r.resolved, pinned: !!r.pinned,
+        createdAt: r.created_at, updatedAt: r.updated_at,
+        del: r.del
       }, ex);
     };
 
@@ -375,7 +383,7 @@ export default {
         const r = await env.DB.prepare(
           'SELECT COUNT(*) rows, COUNT(DISTINCT id) n, MAX(sid) top,'
           + ' SUM(CASE WHEN del = 1 THEN 1 ELSE 0 END) delRows,'
-          + ' MIN(at) lo, MAX(up_at) hi FROM mem_items').first().catch(() => null);
+          + ' MIN(created_at) lo, MAX(updated_at) hi FROM mem_items').first().catch(() => null);
         if (!r) return json({ error: 'mem_items 表还没建。建表语句看 worker/README.md' }, 500);
         return json({ rows: r.rows || 0, n: r.n || 0, top: r.top || 0,
                       delRows: r.delRows || 0, from: r.lo || 0, to: r.hi || 0 });
@@ -391,27 +399,50 @@ export default {
 
         const st = env.DB.prepare(
           'INSERT OR IGNORE INTO mem_items'
-          + ' (id, rev, kind, text, tier, weight, at, up_at, del, extra, got_at)'
-          + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+          + ' (id, rev, type, title, content, summary, importance, confidence,'
+          + '  valence, arousal, resolved, pinned, created_at, updated_at,'
+          + '  del, extra, got_at)'
+          + ' VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const now = Date.now();
         const rows = [];
+        // 数字进来先过一道：NaN、undefined、字符串都归到默认值上，
+        // 不然一条脏数据能把这一整批 batch 弄挂
+        // null 要单独挡一下：Number(null) 是 0，isFinite(0) 是 true，
+        // 不挡的话 confidence: null 会变成 0 —— 「完全不可信」，不是「没说」
+        const num = (v, dft) => {
+          if (v === null || v === undefined || v === '') return dft;
+          const n = Number(v);
+          return isFinite(n) ? n : dft;
+        };
+        const pick = (a, b) => (a !== undefined && a !== null) ? a : b;
         for (const m of list) {
           if (!m || typeof m !== 'object') continue;
           const id = String(m.id == null ? '' : m.id).slice(0, 64);
           if (!id) continue;                                  // 没身份的不收
-          const rev = Number(m.rev) || 1;
-          // 内容之外的那些字段整包塞进 extra，将来加字段不用改表
+          const rev = num(m.rev, 1);
+          // 正文那几样单独占列（要按它们查、按它们排）；
+          // 剩下的整包塞进 extra，将来加字段不用改表
           const extra = {};
-          ['pin', 'tags', 'alias', 'quote', 'vec', 'hits', 'hitAt', 'src', 'legacy']
+          ['tags', 'alias', 'quote', 'vec', 'activationCount', 'mentionCount',
+           'lastAccess', 'source', 'relatedMemoryIds', 'tier', 'legacy',
+           'mergedInto', 'maybeDup', 'dreamedAt',
+           // 老名字也留着 —— 手机上要是还没更新，传上来的是这几个
+           'pin', 'hits', 'hitAt', 'src']
             .forEach(k => { if (m[k] !== undefined) extra[k] = m[k]; });
           rows.push(st.bind(
             id, rev,
-            String(m.kind || 'frag').slice(0, 24),
-            String(m.text == null ? '' : m.text).slice(0, 200000),
-            Number(m.tier) || 0,
-            Number(m.weight) || 0,
-            Number(m.at) || now,
-            Number(m.upAt) || now,
+            String(pick(m.type, m.kind) || 'other').slice(0, 24),
+            String(pick(m.title, '')).slice(0, 2000),
+            String(pick(pick(m.content, m.text), '')).slice(0, 200000),
+            String(pick(m.summary, '')).slice(0, 4000),
+            num(pick(m.importance, m.weight), 5),
+            num(m.confidence, 0.8),
+            num(m.valence, 0),
+            num(m.arousal, 0.3),
+            m.resolved === false ? 0 : 1,
+            pick(m.pinned, m.pin) ? 1 : 0,
+            num(pick(m.createdAt, m.at), now),
+            num(pick(m.updatedAt, m.upAt), now),
             m.del ? 1 : 0,
             JSON.stringify(extra).slice(0, 200000),
             now));
@@ -428,7 +459,7 @@ export default {
         const after = parseInt(url.searchParams.get('after') || '0', 10) || 0;
         const lim = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '200', 10) || 200, 1), 300);
         const r = await env.DB.prepare(
-          'SELECT sid, id, rev, kind, text, tier, weight, at, up_at, del, extra'
+          'SELECT sid, id, rev, type, title, content, summary, importance, confidence, valence, arousal, resolved, pinned, created_at, updated_at, del, extra'
           + ' FROM mem_items WHERE sid > ? ORDER BY sid LIMIT ?').bind(after, lim).all();
         const rows = (r && r.results) || [];
         return json({ n: rows.length, next: rows.length ? rows[rows.length - 1].sid : after,
@@ -439,14 +470,28 @@ export default {
       // 旧的那些行一行不少地留在表里，要看历史走 /mem/since
       if (what === 'dump' && req.method === 'GET') {
         const r = await env.DB.prepare(
-          'SELECT m.sid, m.id, m.rev, m.kind, m.text, m.tier, m.weight, m.at, m.up_at, m.del, m.extra'
+          'SELECT m.sid, m.id, m.rev, m.type, m.title, m.content, m.summary,'
+          + ' m.importance, m.confidence, m.valence, m.arousal,'
+          + ' m.resolved, m.pinned, m.created_at, m.updated_at, m.del, m.extra'
           + ' FROM mem_items m'
           + ' JOIN (SELECT id, MAX(rev) mx FROM mem_items GROUP BY id) t'
           + ' ON m.id = t.id AND m.rev = t.mx'
-          + ' ORDER BY m.at').all();
+          + ' ORDER BY m.created_at').all();
         const rows = (r && r.results) || [];
-        return json({ app: 'mengxia', kind: 'memory', v: 1, at: Date.now(),
-                      n: rows.length, items: rows.map(memRow) });
+        return json({ app: 'mengxia', kind: 'memory', v: 1, memoryVersion: 1,
+                      at: Date.now(), n: rows.length, items: rows.map(memRow) });
+      }
+
+      // 单独一条现在是什么样（rev 最大那一版）。
+      // 软删、恢复完了拿它对一眼最省事，不用把整个库 dump 下来
+      if (what === 'one' && req.method === 'GET') {
+        const id = url.searchParams.get('id') || '';
+        if (!id) return json({ error: '要带 ?id=' }, 400);
+        const r = await env.DB.prepare(
+          'SELECT sid, id, rev, type, title, content, summary, importance, confidence, valence, arousal, resolved, pinned, created_at, updated_at, del, extra'
+          + ' FROM mem_items WHERE id = ? ORDER BY rev DESC LIMIT 1').bind(id).first();
+        if (!r) return json({ error: '云上没有这一条' }, 404);
+        return json({ id: id, item: memRow(r) });
       }
 
       // 一条记忆的全部历史
@@ -454,12 +499,12 @@ export default {
         const id = url.searchParams.get('id') || '';
         if (!id) return json({ error: '要带 ?id=' }, 400);
         const r = await env.DB.prepare(
-          'SELECT sid, id, rev, kind, text, tier, weight, at, up_at, del, extra'
+          'SELECT sid, id, rev, type, title, content, summary, importance, confidence, valence, arousal, resolved, pinned, created_at, updated_at, del, extra'
           + ' FROM mem_items WHERE id = ? ORDER BY rev').bind(id).all();
         return json({ id: id, rows: ((r && r.results) || []).map(memRow) });
       }
 
-      return json({ error: '没有这个地址。有的是 /mem/put /mem/since /mem/stat /mem/dump /mem/trace /mem/backup' }, 404);
+      return json({ error: '没有这个地址。有的是 /mem/put /mem/since /mem/stat /mem/dump /mem/one /mem/trace /mem/backup' }, 404);
     }
 
     // ---------- 3. 转一手 ----------
