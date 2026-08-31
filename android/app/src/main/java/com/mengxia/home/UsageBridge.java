@@ -141,7 +141,12 @@ public class UsageBridge {
             java.util.HashSet<String> real = launchable(pm);
             for (java.util.Map.Entry<String, long[]> en : agg.entrySet()) {
                 long[] a = en.getValue();
-                if (a[2] < 8000 && a[3] < 2) continue;      // 划过去一下不算
+                // 只看前台待了多久，不看开了几次。
+                // 原来是 (时长不够 && 只开过一次) 才丢 —— 那是个 and：
+                // 系统在背后把 App 唤起来两次、每次半秒的就闯过去了。
+                // 推送到达、小组件刷新、别的 App 借它的分享面板，都会留下
+                // ACTIVITY_RESUMED。于是余光里全是她根本没点开过的东西。
+                if (a[2] < 10000) continue;                // 前台待不满十秒就不算她打开过
                 // 桌面上没有图标的一律不算：权限控制器、软件包安装程序、
                 // 安全认证服务、IntentResolver 那一类，都是系统自己在动
                 if (!real.isEmpty() && !real.contains(en.getKey())) continue;
