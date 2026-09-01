@@ -127,6 +127,33 @@ public class SaveBridge {
         } catch (Exception e) { toast("换不过去：" + e.getMessage()); }
     }
 
+    // ---------- 安装包自己是哪一版 ----------
+    //
+    // 页面那串 __BUILD__ 是网页出炉的时间，它自己会更新，装不装 APK 都会变。
+    // 这一串是安装包的版本，只有重新装一次才会变 —— 两个是两回事。
+    // 有了它才看得出「壳该不该重装了」。
+    //
+    // 拿不到就返回空／0，网页那边当成「没装壳，在浏览器里开的」
+
+    /** 安装包版本，形如 1.42 */
+    @JavascriptInterface
+    public String appVer() {
+        try {
+            String v = act.getPackageManager()
+                    .getPackageInfo(act.getPackageName(), 0).versionName;
+            return v == null ? "" : v;
+        } catch (Throwable t) { return ""; }
+    }
+
+    /** 第几次打的包。同一个版本号重打过的话，靠它分先后 */
+    @JavascriptInterface
+    public int appBuild() {
+        try {
+            return act.getPackageManager()
+                    .getPackageInfo(act.getPackageName(), 0).versionCode;
+        } catch (Throwable t) { return 0; }
+    }
+
     private void toast(final String msg) {
         act.runOnUiThread(new Runnable() {
             public void run() { Toast.makeText(act, msg, Toast.LENGTH_LONG).show(); }
