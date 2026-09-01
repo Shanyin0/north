@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 定位。两个都写：粗的（基站/WiFi，省电）和细的（GPS）。
+         她在系统里亲手给，随时能收回；没给的话 GeoBridge 返回空，别的照跑 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 看她最近在用什么 App。这个权限系统不给自动授，
          必须她自己去「设置 → 应用 → 特殊权限 → 使用情况访问」里打开，随时能关 -->

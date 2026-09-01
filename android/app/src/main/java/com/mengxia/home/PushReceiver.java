@@ -9,6 +9,21 @@ public class PushReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(final Context ctx, Intent intent) {
         final Context app = ctx.getApplicationContext();
+
+        // 「该睡了」那个闹钟走另一条路：不跑推送决策，
+        // 直接把梦匣拉到前台，剩下的（弹什么、说什么）交给网页
+        if (intent != null && BedBridge.ACTION_BED.equals(intent.getAction())) {
+            try {
+                Intent open = new Intent(app, MainActivity.class);
+                open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                open.putExtra("bedtime", System.currentTimeMillis());
+                app.startActivity(open);
+            } catch (Throwable ignored) {}
+            return;
+        }
+
         final PendingResult pr = goAsync();
         new Thread(new Runnable() {
             public void run() {

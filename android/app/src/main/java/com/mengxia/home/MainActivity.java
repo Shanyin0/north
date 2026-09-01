@@ -250,6 +250,8 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new SaveBridge(this), "MengxiaNative");
         web.addJavascriptInterface(new UsageBridge(this), "MengxiaUsage");
         web.addJavascriptInterface(new XBridge(this), "MengxiaX");
+        web.addJavascriptInterface(new GeoBridge(this), "MengxiaGeo");
+        web.addJavascriptInterface(new BedBridge(this), "MengxiaBed");
         // 聊天记录被盖掉之后，去 LevelDB 的旧文件里按字节捞。只读 App 自己的目录
         web.addJavascriptInterface(new DigBridge(this), "MengxiaDig");
         // 把原始 LevelDB 文件原样打包到「下载」——没 root 也不用电脑
