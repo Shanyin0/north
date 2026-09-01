@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.location.Address;
+import android.location.Geocoder;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -13,6 +15,7 @@ import android.webkit.JavascriptInterface;
 import org.json.JSONObject;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 她在哪儿。
@@ -179,6 +182,66 @@ public class GeoBridge {
             o.put("ageSec", age / 1000);
             o.put("src", best.getProvider() == null ? "" : best.getProvider());
             return o.toString();
+        } catch (Throwable t) { return ""; }
+    }
+
+    // ================= 经纬度 → 地名 =================
+    //
+    // 安卓系统自带这一步，不用注册、不用实名、不用申请任何 key、不花钱。
+    // 国行机是各家 ROM（小米、OPPO、华为…）自己实现的，出来就是中文地址。
+    //
+    // 但它不保证一定有：ROM 阉过、或者机器上根本没装地名库的话，
+    // isPresent() 是 false，或者查出来是空。所以网页那边要能接受空串 ——
+    // 拿不到地名就只报「离家多远」，定位本身照跑。
+    //
+    // 从 JS 桥调进来的时候不在主线程上，直接同步查就行。
+
+    /** 这台机器能不能自己把经纬度翻成地名 */
+    @JavascriptInterface
+    public boolean nameable() {
+        try { return Geocoder.isPresent(); } catch (Throwable t) { return false; }
+    }
+
+    /**
+     * 一对经纬度翻成一句地名。翻不出来返回空串，不抛。
+     *
+     * 拼的时候从「市」往下拼，省略国名和省 —— 她要看的是「在哪条街」，
+     * 不是「中国广东省」。ROM 给了整句 (getAddressLine) 就用整句，
+     * 那个通常最像人话
+     */
+    @JavascriptInterface
+    public String name(double lat, double lng) {
+        if (lat == 0 && lng == 0) return "";
+        try {
+            Geocoder g = new Geocoder(act, Locale.CHINA);
+            List<Address> ls = g.getFromLocation(lat, lng, 1);
+            if (ls == null || ls.isEmpty()) return "";
+            Address a = ls.get(0);
+
+            String line = a.getMaxAddressLineIndex() >= 0 ? a.getAddressLine(0) : null;
+            if (line != null && line.trim().length() > 0) {
+                // 有些 ROM 会在最前面带上「中国」，去掉
+                String s = line.trim();
+                if (s.startsWith("中国")) s = s.substring(2).trim();
+                return s.length() > 60 ? s.substring(0, 60) : s;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            String[] parts = {
+                a.getLocality(),        // 市
+                a.getSubLocality(),     // 区
+                a.getThoroughfare(),    // 街
+                a.getSubThoroughfare(), // 门牌
+                a.getFeatureName()      // 那个地方叫什么
+            };
+            for (String p : parts) {
+                if (p == null || p.trim().length() == 0) continue;
+                // 有的 ROM 会把同一段重复给两遍，跳掉
+                if (sb.indexOf(p) >= 0) continue;
+                sb.append(p);
+            }
+            String s = sb.toString();
+            return s.length() > 60 ? s.substring(0, 60) : s;
         } catch (Throwable t) { return ""; }
     }
 }
