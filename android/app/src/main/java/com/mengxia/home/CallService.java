@@ -11,8 +11,6 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 
-import androidx.core.app.NotificationCompat;
-
 /**
  * 通话的时候在后台立着的那根桩子。
  *
@@ -65,15 +63,20 @@ public class CallService extends Service {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pf |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pi = PendingIntent.getActivity(this, 0, back, pf);
 
-            Notification n = new NotificationCompat.Builder(this, CH_ID)
-                    .setSmallIcon(R.drawable.ic_noti)
+            // 用系统自带的 Notification.Builder，跟 Pusher 那边一个路子。
+            // 这个项目里没有 androidx，别引 NotificationCompat
+            Notification.Builder b;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) b = new Notification.Builder(this, CH_ID);
+            else b = new Notification.Builder(this);
+            b.setSmallIcon(R.drawable.ic_noti)
                     .setContentTitle("通话中")
                     .setContentText("点一下回到通话")
-                    .setPriority(NotificationCompat.PRIORITY_LOW)
                     .setOngoing(true)                 // 划不掉 —— 通话还在
                     .setShowWhen(false)
-                    .setContentIntent(pi)
-                    .build();
+                    .setContentIntent(pi);
+            // 安卓 8 以前没有频道，轻重缓急写在通知自己身上
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) b.setPriority(Notification.PRIORITY_LOW);
+            Notification n = b.build();
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // 安卓 14 起必须说清楚这个前台服务是干什么的，
