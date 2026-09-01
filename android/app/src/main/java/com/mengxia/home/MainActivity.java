@@ -164,6 +164,62 @@ public class MainActivity extends Activity {
         });
 
         web.setWebChromeClient(new WebChromeClient() {
+
+            // ---------- 网页弹的那些框 ----------
+            //
+            // WebView 默认一个都不弹：onJsConfirm 不重写的话，系统当成
+            // 「没人管」，直接给网页回一个 false —— 网页那边看起来就是
+            // 「点了没反应」。删照片、清位置、全都关掉…… 十八个确认框
+            // 在装了 APK 的手机上全是哑的，浏览器里反而正常。
+            //
+            // 这儿把三种都接住，用系统的对话框弹出来。
+            // setCancelable(false)：点旁边不算数，必须明确选一个 ——
+            // 不然「取消」和「没点」在网页那边是同一个 false，分不出来。
+
+            @Override
+            public boolean onJsAlert(WebView v, String url, String msg, final android.webkit.JsResult res) {
+                if (isFinishing()) { res.cancel(); return true; }
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(msg == null ? "" : msg)
+                        .setPositiveButton("好", (d, w) -> res.confirm())
+                        .setOnCancelListener(d -> res.cancel())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView v, String url, String msg, final android.webkit.JsResult res) {
+                if (isFinishing()) { res.cancel(); return true; }
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(msg == null ? "" : msg)
+                        .setCancelable(false)
+                        .setPositiveButton("好", (d, w) -> res.confirm())
+                        .setNegativeButton("算了", (d, w) -> res.cancel())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView v, String url, String msg, String dft,
+                                      final android.webkit.JsPromptResult res) {
+                if (isFinishing()) { res.cancel(); return true; }
+                final EditText in = new EditText(MainActivity.this);
+                in.setText(dft == null ? "" : dft);
+                in.setSelectAllOnFocus(true);
+                int pad = (int) (18 * getResources().getDisplayMetrics().density);
+                FrameLayout box = new FrameLayout(MainActivity.this);
+                box.setPadding(pad, pad / 2, pad, 0);
+                box.addView(in);
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(msg == null ? "" : msg)
+                        .setView(box)
+                        .setCancelable(false)
+                        .setPositiveButton("好", (d, w) -> res.confirm(in.getText().toString()))
+                        .setNegativeButton("算了", (d, w) -> res.cancel())
+                        .show();
+                return true;
+            }
+
             @Override
             public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb,
                                              FileChooserParams params) {
@@ -252,6 +308,8 @@ public class MainActivity extends Activity {
         web.addJavascriptInterface(new XBridge(this), "MengxiaX");
         web.addJavascriptInterface(new GeoBridge(this), "MengxiaGeo");
         web.addJavascriptInterface(new BedBridge(this), "MengxiaBed");
+        // 通话的时候立一根桩子：麦克风留着、进程不回收、返回键不关这一屏
+        web.addJavascriptInterface(new CallBridge(this), "MengxiaCall");
         // 聊天记录被盖掉之后，去 LevelDB 的旧文件里按字节捞。只读 App 自己的目录
         web.addJavascriptInterface(new DigBridge(this), "MengxiaDig");
         // 把原始 LevelDB 文件原样打包到「下载」——没 root 也不用电脑
@@ -416,7 +474,22 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        // 正在通话的时候按返回：退到后台，别把这一屏关掉。
+        //
+        // 原来这儿是 super.onBackPressed()，那是把整个 Activity 结束掉 ——
+        // WebView 连同里面的通话状态一起没了。她一按返回通话就断，就是这个。
+        // moveTaskToBack 只是退到后台，网页还活着，通知栏那条「通话中」
+        // 点一下就回来了
+        if (CallBridge.inCall) { moveTaskToBack(true); return; }
         if (web != null && web.canGoBack()) web.goBack();
         else super.onBackPressed();
+    }
+
+    @Override
+    protected void onDestroy() {
+        // 这一屏真的没了，那通话也没了 —— 通知栏那条得撤掉，
+        // 不然会一直杵着，点进去还是个空的
+        try { CallBridge.inCall = false; CallService.end(getApplicationContext()); } catch (Throwable ignored) {}
+        super.onDestroy();
     }
 }

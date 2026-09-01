@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 通话的时候立一根前台服务的桩子。没有它，她一切走安卓就把麦收回去
+         （安卓 9 起不给后台 App 用麦），过一会儿连进程都可能被回收。
+         安卓 14 起还要单独声明是「microphone」那一类，说了才留得住麦 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- 看她最近在用什么 App。这个权限系统不给自动授，
          必须她自己去「设置 → 应用 → 特殊权限 → 使用情况访问」里打开，随时能关 -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -58,5 +63,12 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- 通话中那根桩子。exported=false —— 只有梦匣自己叫得动它 -->
+        <service
+            android:name=".CallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+
     </application>
 </manifest>
