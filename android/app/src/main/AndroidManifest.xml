@@ -13,6 +13,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- 存图到相册。安卓 10 起走 MediaStore 不需要这个，只给老系统留着 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <!-- 通话的时候立一根前台服务的桩子。没有它，她一切走安卓就把麦收回去
          （安卓 9 起不给后台 App 用麦），过一会儿连进程都可能被回收。
          安卓 14 起还要单独声明是「microphone」那一类，说了才留得住麦 -->
